@@ -1,4 +1,6 @@
-# AtlasSnapshot DD2
+# Dragon's Dogma 2 Character Snapshot
+
+**AtlasSnapshot** exports live gear, stats, position, relationships and NPC observations. [Public repository](https://github.com/Scorplous/dragons-dogma-2-character-snapshot).
 
 Experimental local character-observation exporter for **Dragon's Dogma 2** using REFramework. It writes JSON every five seconds for local tools and assistants. It does not deliberately change saves, equipment, affinity or NPC state. Runtime calculations are experimental and may fail as the game or framework changes.
 
