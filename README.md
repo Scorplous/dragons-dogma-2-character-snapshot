@@ -8,6 +8,24 @@ Experimental local character-observation exporter for **Dragon's Dogma 2** using
 
 **Version 0.10.0-experimental.** This is not an official Capcom product. It targets DD2, not the original Dragon's Dogma: Dark Arisen.
 
+## Why this is useful
+
+This project grew out of playing DD2 while talking with ChatGPT by voice: asking the assistant to check the character's actual equipment and stats instead of repeatedly opening menus and reading numbers aloud. A snapshot reduces manual copying and gives the conversation a concrete reference, so advice can be tied to your captured gear and state rather than assumptions about a generic build.
+
+It also makes less-visible relationship information easier to discuss. The relationship reader tries to present game rank labels as understandable attitudes while keeping the underlying values and unknowns visible. Its new attitude mapping still needs live validation. For NPC history, the useful answer may be "we observed this NPC dead, but do not know the cause" rather than an invented account of what happened.
+
+You can ask about gear, captured vocation fields or equipment weight where the data supports an answer. For a comparison with an unequipped item, provide that item's details too: the exporter does not read your entire inventory. Party composition and skill loadouts also need extra context; this is not a complete party export or an optimal-build calculator.
+
+## Example: ask while you play
+
+1. **Let the game export.** Load your character with REFramework and the exporter running. It attempts a local snapshot every five seconds.
+2. **Give the assistant the relevant data.** Share the reader's output, or authorize the snapshot folder in an assistant environment that supports local file access. Voice is a convenient way to ask questions, but text works too.
+3. **Ask a question.** For example: "What do my current gear and stats suggest I should improve?", "What enhanced stats and weight are reported for my equipped weapon?", or "What relationship information do we have for this NPC?"
+4. **Have it check before advising.** Ask the assistant to read a fresh observation when possible, report its timestamp and availability, and use only the fields relevant to the question. Missing NPC records remain unknown. Raw coordinates can provide position context, but do not support verified map directions; quest progress and player-kill attribution are not available in this version.
+5. **Use the answer in play, then refresh when needed.** After changing equipment or returning later, ask it to check again or share a new file. Five-second exports are not an automatic stream into ChatGPT, and no background AI model silently watches each export.
+
+Saying "look at this" may also be useful in a separately configured assistant session that can take screenshots with your authorization. **Screenshot capture is not provided by this exporter.** A screenshot or an extra item tooltip can supplement the snapshot when your question needs information it does not contain.
+
 ## How ChatGPT fits in
 
 The exporter runs locally inside DD2 through REFramework and writes files independently of ChatGPT. **Running the exporter requires no ChatGPT account, subscription, OpenAI API key or automatic AI connection.** There is no built-in upload, ChatGPT plugin or background chat integration. Choosing to use ChatGPT for interpretation is a separate step, subject to the features available in your account and session.
