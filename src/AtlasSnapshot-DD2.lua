@@ -1,4 +1,4 @@
--- AtlasSnapshot 0.10.0 staged. Main-pawn favorability and retained NPC history evidence.
+-- AtlasSnapshot 0.11.0 staged. Pawn component identity correction; pending live validation.
 -- Field names confirmed by the first live probe; semantics remain unvalidated.
 local startup, requested, serial = true, false, 0
 local next_refresh=os.time()+5
@@ -369,11 +369,21 @@ local function main_pawn_affinity()
         if not context then return unavailable('Main pawn favorability context unavailable') end
         local rating=scalar_field(context,'_FavorabilityRating')
         local accumulated=scalar_field(context,'_AccumulatedFavorability')
-        local nf=field('app.Human','<PawnDataContext>k__BackingField')
-        local names=nf and nf:get_data(pawn)
+        -- app.Pawn is a component, not an app.Human/app.Character receiver.
+        -- Resolve optional identity separately so it cannot discard favorability.
+        local identity_ok,identity=pcall(function()
+            local f=field('app.Pawn','<CachedCharacter>k__BackingField')
+            local character=f and f:get_data(pawn)
+            if not character then return unavailable('Cached pawn Character unavailable') end
+            local id,reason=safe_get(character,'app.Character','get_CharaID',{},'app.CharacterID')
+            if id==nil then reason=reason or 'Character ID getter unavailable or signature mismatch' end
+            return {characterId=id,reason=reason,source='Pawn.CachedCharacter.get_CharaID'}
+        end)
+        if not identity_ok then identity={captureStatus='error',reason=tostring(identity)} end
         return {captureStatus='partial',source='PawnManager._MainPawn.MainPawnDataContext',
-            characterId=safe_get(pawn,'app.Character','get_CharaID',{},'app.CharacterID'),
-            name=scalar_field(names,'_Name'),favorabilityRating=rating,accumulatedFavorability=accumulated,
+            characterId=identity.characterId,identityEvidence=identity,
+            nameStatus='unavailable; Pawn component is not a Human name-data receiver',
+            favorabilityRating=rating,accumulatedFavorability=accumulated,
             scale='raw values; thresholds and normalization unverified',semanticsValidated=false,
             valuesAvailable=type(rating)=='number' or type(accumulated)=='number'}
     end)
@@ -642,7 +652,7 @@ local function position(player)
 end
 local function write(result,kind)
     serial=serial+1
-    result.tool='AtlasSnapshot-DD2';result.version='0.10.0-experimental'
+    result.tool='AtlasSnapshot-DD2';result.version='0.11.0-experimental'
     result.capturedAtUtc=os.date('!%Y-%m-%dT%H:%M:%SZ')
     result.captureKind=kind;result.semanticsValidated=false
     local path='AtlasSnapshot-DD2-schema-latest.json'
