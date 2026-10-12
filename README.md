@@ -1,20 +1,51 @@
 # Dragon's Dogma 2 Character Snapshot
 
-**AtlasSnapshot** exports live gear, stats, position, relationships and NPC observations. [Public repository](https://github.com/Scorplous/dragons-dogma-2-character-snapshot).
+**AtlasSnapshot** creates local snapshots of your Dragon's Dogma 2 character so you can share concrete game observations with **ChatGPT** for gear comparisons, stat explanations and relationship discussions. You can also inspect the files yourself or use another compatible tool. [Public repository](https://github.com/Scorplous/dragons-dogma-2-character-snapshot).
+
+**Atlas is the original user's nickname for their AI assistant; AtlasSnapshot is this project's branding.** Atlas is not a separate AI product you need to install or subscribe to.
 
 Experimental local character-observation exporter for **Dragon's Dogma 2** using REFramework. It writes JSON every five seconds for local tools and assistants. It does not deliberately change saves, equipment, affinity or NPC state. Runtime calculations are experimental and may fail as the game or framework changes.
 
 **Version 0.10.0-experimental.** This is not an official Capcom product. It targets DD2, not the original Dragon's Dogma: Dark Arisen.
 
-## Current scope
+## How ChatGPT fits in
 
-- Equipped item IDs and game-resolved names; base item parameters and calculated enhanced parameters kept separate.
-- Character calculation records, stamina/level observations, and raw player world coordinates. Some field meanings, units and display formulas remain unverified.
-- Named NPC stored sentiment values with incomplete rotating coverage: up to 128 holder-array slots and 32 NPC records per capture. Unseen or missing NPCs are never assumed to have zero affinity or to be dead.
-- Group crime records, explicitly **not** a universal town-reputation score. Group-to-town mappings are not established.
-- Explicit NPC dead-state observations. **Observed dead does not mean killed by the player.** The current game reader does not establish historical or future player-kill attribution or original kill locations.
-- Local append-only history writer with deduplication, identity/provenance checks, and a Windows watcher. Currently journals only the verified current quest-layer NPC subset; this is not a complete list of important NPCs. Later entity positions are observation locations, not historical death locations.
-- Attitude-first local display matches the stored NPC rank to the game's runtime enum labels and retains raw numbers. Unknown, missing or ambiguous mappings stay unknown. No guessed thresholds, percentages, romance status or behavior. Main-pawn favorability uses a separate scale.
+The exporter runs locally inside DD2 through REFramework and writes files independently of ChatGPT. **Running the exporter requires no ChatGPT account, subscription, OpenAI API key or automatic AI connection.** There is no built-in upload, ChatGPT plugin or background chat integration. Choosing to use ChatGPT for interpretation is a separate step, subject to the features available in your account and session.
+
+1. Install the exporter below, load your game and allow a snapshot to be written.
+2. Run `Read-latest-snapshot.py` to obtain a consistent observation with its availability and age. Its output includes the captured data or a clearly marked last-known snapshot. The relationships reader provides a smaller attitude-focused view.
+3. Share the reader's output with ChatGPT by pasting it or attaching a saved copy where file attachments are supported. OpenAI documents [sharing files and data exports with ChatGPT](https://learn.chatgpt.com/docs/use-chatgpt). Alternatively, if your particular assistant environment offers local file tools, explicitly authorize access to the relevant snapshot folder. This repository neither supplies nor enables that access; ordinary chats must not be assumed to read your computer.
+4. Ask a specific question, such as: "Explain the captured equipment stats, distinguish base values from enhanced values, and list anything unknown." Ask the assistant to preserve timestamps and uncertainty rather than fill missing fields with guesses.
+5. Share a new observation when the game changes. An attached copy does not update itself, and the five-second export interval does not refresh a ChatGPT conversation automatically.
+
+Only share data you intend the receiving service to process. A snapshot can contain character names, positions and NPC relationship or world-state information. Sharing source code alone does not give ChatGPT your current character data.
+
+## What a snapshot contains
+
+Each section reports what could actually be read. Fields can be partial, unavailable or in error; a section's presence does not mean every value is known. Missing values must not become zero, a clean bill of health, a dead NPC, or a never-completed quest.
+
+| Section | Exported observations and limits |
+| --- | --- |
+| Equipped gear | Slot IDs and game enum labels, item IDs and game-resolved names. Base parameters are separate from game-calculated enhanced equipment parameters, calculated weight and weapon element where available. Numeric fields can include attack, magic, defence, knockdown-related values, damage types and resistances. Raw instance state is retained, but upgrade-level interpretation and units are not universally verified. Inventory and storage ownership counts are not captured. |
+| Character stats | Bounded raw status, stamina and vocation fields, including level-related observations and a current vocation label where resolved. Separate calculator records capture basic attack/defence and values incorporating equipment/buffs where the runtime methods work. These are experimental source values, not a guarantee that every number exactly matches the final character-screen formula. Item stats are not silently substituted for character totals. |
+| Position | Raw player world `x`, `y`, `z` coordinates without deliberate rounding. Coordinate units, axis directions, scene identity and conversion to a map grid are unverified or unavailable. A position does not establish that active gameplay is underway. |
+| NPC relationships | Verified character ID, game-resolved name where available, stored sentiment value and rank, temporary sentiment, group identifiers and current quest-layer classification. A rotating scan checks at most 128 holder-array slots and emits at most 32 NPC records per capture. This is neither a complete roster nor proof that you have encountered every listed NPC. |
+| NPC attitudes | The display attempts an exact match between the stored rank and runtime game enum labels, retaining the raw values. Missing or ambiguous matches produce "Unknown attitude." It does not invent affinity thresholds, percentages, romance status or intended behavior. This v0.10 mapping still needs live validation. |
+| Main pawn | Name and character ID where available, raw `favorabilityRating` and `accumulatedFavorability` from the main pawn context. This is a separate scale from NPC sentiment; thresholds and normalization are unverified, so the display leaves pawn attitude unknown. New v0.10 capture is pending live validation. |
+| Crime | Up to 32 game character-group crime records, with their identifiers and runtime labels, where readable. These are separate from NPC affinity; group-to-town mappings and a universal town-reputation score are not established. |
+| NPC life observations | Explicit dead/coffin flag evidence and entity presence support bounded alive/dead observations after identity checks. An absent entity without a dead flag stays unknown. Records may include raw revival count and an observed entity position, with provenance and cause marked unknown. This does not identify who killed an NPC or where a death originally happened. |
+| Retained NPC evidence | Up to 128 entries from the game's retained NPC-history list: character IDs, raw flags and available enum labels, plus count/truncation information. New v0.10 capture is pending live validation. These flags are not a verified player-kill ledger and provide no established original event locations. |
+| Capture metadata | Exporter version, capture kind/status, UTC capture time, epoch timestamp, session ID, sequence number, refresh/staleness settings and source/error details. Startup schema metadata describes reflected fields and methods; it is not itself character progress. Quest progress and lifetime completion history are not read by this version. |
+
+## Timing, freshness and history
+
+The script attempts a character export every five seconds while its REFramework frame callback runs. It alternates between `AtlasSnapshot-DD2-slot-0.json` and `AtlasSnapshot-DD2-slot-1.json`, then publishes `AtlasSnapshot-DD2-latest.json` as a pointer to the completed slot. The pointer alone is not a character snapshot. Startup metadata goes to `AtlasSnapshot-DD2-schema-latest.json`.
+
+The reader checks the pointer twice and matches session, sequence and timestamp before returning data. It marks observations older than 15 seconds stale; partial writes and inconsistent files are rejected. A recent file is still an **unverified observation**, because player references can persist through menus or loading. Saved copies are historical evidence, not a live feed. The rotating slot files do not preserve every earlier capture.
+
+The optional Windows history watcher maintains a separate local append-only journal with deduplication and session boundaries. It currently journals verified life observations for the current quest-layer NPC subset, not all important NPCs. It cannot reconstruct events before observation, detect same-session save rollback or infer a resurrection from a dead-to-alive change alone. **Observed dead does not mean killed by the player.** A later NPC position is an observation location, and the player's current position cannot stand in for an original kill location.
+
+## Validation status
 
 The v0.9 equipment, coordinates, named NPC sentiment and history watcher were live-tested on Windows with Steam DD2 build **25290080** and REFramework **nightly-01432 / d052e8fd3fd41d0a1a33394fcf6e6c19be39b1ee**. This is an observed combination, not a general compatibility guarantee. **The new v0.10 main-pawn favorability, retained NPC-history fields and attitude rank mapping are pending live validation.** Tests use synthetic data; they do not prove game behavior.
 
@@ -29,7 +60,7 @@ Alternatively, `tools/Install.ps1` requires explicit `-GameDirectory`, `-SaveDir
 
 ## Local readers
 
-Python 3.10+ is required. Readers use the standard library; synthetic Lua tests additionally need Lupa. Set paths locally; do not commit your environment or generated data.
+Python 3.10+ is required for these optional local readers, not for the Lua exporter itself. Readers use the standard library; synthetic Lua tests additionally need Lupa. Set paths locally; do not commit your environment or generated data.
 
 ```powershell
 $env:ATLAS_DD2_DATA_DIR = '<DD2>\reframework\data'
