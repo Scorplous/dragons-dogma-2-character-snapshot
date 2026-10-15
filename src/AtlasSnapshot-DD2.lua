@@ -1,4 +1,4 @@
--- AtlasSnapshot 0.11.0 staged. Pawn component identity correction; pending live validation.
+-- AtlasSnapshot 0.13.0. Native health, equipped skills, progressing quests and localized areas; pending live verification.
 -- Field names confirmed by the first live probe; semantics remain unvalidated.
 local startup, requested, serial = true, false, 0
 local next_refresh=os.time()+5
@@ -127,7 +127,7 @@ local function describe_type(name,focus)
             local selected=not focus
             if focus then
                 local label=m:get_name():lower()
-                for _,word in ipairs({'sentiment','favor','pawn','npc','name','dead','death','kill','reviv','resurrect','crime','town','area','reputation','context','holder'}) do
+                for _,word in ipairs({'sentiment','favor','pawn','npc','name','dead','death','kill','reviv','resurrect','crime','town','area','reputation','context','holder','hp','health','recover','loss','skill','ability','job','quest','location','rank','title','task','log','message'}) do
                     if label:find(word,1,true) then selected=true;break end
                 end
             end
@@ -633,6 +633,220 @@ local function gear()
     end
     return result
 end
+-- Combined gameplay discovery. Only known read accessors are invoked; unresolved
+-- field semantics remain diagnostic evidence, never equipped skills or progress.
+local function field_value(obj,owner,name)
+    if not obj then return nil end
+    local f=field(owner,name)
+    return f and f:get_data(obj)
+end
+local function static_get(owner,name,args,ret,...)
+    local supplied={...}
+    local ok,value=pcall(function()
+        local td=sdk.find_type_definition(owner);local selected
+        for _,m in ipairs(td and td.get_methods and td:get_methods() or {}) do
+            if m:get_name()==name and m:is_static() and m:get_num_params()==#args then
+                local rt=m:get_return_type();local pts=m:get_param_types() or {}
+                local match=rt and rt:get_full_name()==ret and #pts==#args
+                for i,a in ipairs(args) do if not pts[i] or pts[i]:get_full_name()~=a then match=false end end
+                if match then if selected then return nil end;selected=m end
+            end
+        end
+        return selected and selected:call(nil,table.unpack(supplied))
+    end)
+    if ok then return value end
+end
+local function readable(value)
+    if type(value)=='string' and value:match('%S') then return value end
+end
+local function health_observation(player)
+    local character=field_value(player,'app.Human','<Chara>k__BackingField')
+    if not character then return unavailable('Player Character unavailable') end
+    local function number(name)
+        local value,reason=safe_get(character,'app.Character',name,{},'System.Single')
+        if type(value)=='number' and value==value and math.abs(value)~=math.huge and value>=0 then
+            return {captureStatus='captured',value=value,source='Character.'..name}
+        end
+        return unavailable(reason or 'Expected finite nonnegative health value/signature unavailable')
+    end
+    return {captureStatus='partial',current=number('get_Hp'),reducedMaximum=number('get_ReducedMaxHp'),
+        fullMaximum=number('get_OriginalMaxHp'),
+        recoverableMaximum=unavailable('Recoverable maximum semantics pending validation'),
+        lossGauge=unavailable('No inferred subtraction; native loss meaning pending validation'),
+        semanticsValidated=false}
+end
+local function array_evidence(array,limit)
+    if not array then return unavailable('Array unavailable') end
+    local count=array:get_size()
+    if type(count)~='number' or count<0 or count%1~=0 or count>100000 then return unavailable('Invalid array size') end
+    local r={captureStatus='partial',count=count,truncated=count>limit,entries={},semanticsValidated=false}
+    for i=0,math.min(count,limit)-1 do
+        local ok,value=pcall(function()
+            local item=array:get_element(i)
+            if type(item)=='number' or type(item)=='boolean' or type(item)=='string' then return {index=i,value=item} end
+            if not item then return {index=i,captureStatus='unavailable'} end
+            local td=item:get_type_definition()
+            return {index=i,data=read_fields(item,td,0,{left=48},{}),type=td:get_full_name()}
+        end)
+        r.entries[#r.entries+1]=ok and value or {index=i,captureStatus='error',reason=tostring(value)}
+    end
+    return r
+end
+local function skill_observations(player)
+    local job=field_value(player,'app.Human','<JobContext>k__BackingField')
+    local jobId=scalar_field(job,'CurrentJob')
+    if type(jobId)~='number' or jobId<0 or jobId%1~=0 then return unavailable('Current vocation unavailable') end
+    local r={captureStatus='partial',vocationId=jobId,
+        vocationName=readable(static_get('app.GUIBase','getJobName',{'app.Character.JobEnum'},'System.String',jobId)),
+        vocationRank=safe_get(job,'app.JobContext','calcJobRank',{'app.Character.JobEnum'},'System.UInt32',jobId),
+        source='CurrentJob with context slot getters; never learned-skill catalogs',semanticsValidated=false}
+    for _,spec in ipairs({{'equipped','<SkillContext>k__BackingField','app.HumanSkillContext','SkillSlot','getSkillID','app.HumanCustomSkillID'},
+                         {'augments','<AbilityContext>k__BackingField','app.AbilityContext','AbilitySlot','getAbility','app.HumanAbilityID'}}) do
+        local context=field_value(player,'app.Human',spec[2])
+        local slots,seen={},{}
+        for label,id in pairs(enum(spec[3]..'.'..spec[4])) do
+            local lower=label:lower()
+            if id>=0 and id<16 and id%1==0 and not seen[id] and lower~='none' and lower~='end' and
+               not lower:find('max') and not lower:find('count') and not lower:find('invalid') and not lower:find('num') then
+                seen[id]=true;slots[#slots+1]={id=id,label=label}
+            end
+        end
+        table.sort(slots,function(a,b) return a.id<b.id end)
+        local section={captureStatus='partial',records={},source=spec[3]..'.'..spec[5],currentVocationOnly=true}
+        if not context or #slots==0 then section=unavailable('Context or runtime slot enum unavailable')
+        else
+            for _,slot in ipairs(slots) do
+                local ok,record=pcall(function()
+                    local id,reason=safe_get(context,spec[3],spec[5],{'app.Character.JobEnum',spec[3]..'.'..spec[4]},spec[6],jobId,slot.id)
+                    local rec={slot=slot.id,slotLabel=slot.label,captureStatus='unavailable',reason=reason}
+                    if type(id)~='number' or id%1~=0 then return rec end
+                    if id<=0 then rec.captureStatus='empty';rec.rawId=id;return rec end
+                    rec.captureStatus='partial'
+                    if spec[1]=='equipped' then
+                        rec.skillId=id
+                        rec.level=safe_get(context,spec[3],'getCustomSkillLevel',{'app.HumanCustomSkillID'},'app.HumanCustomSkillLevelNo',id)
+                        if type(rec.level)=='number' then rec.name=readable(static_get('app.GUIBase','getCustomSkillName',
+                            {'app.Character.JobEnum','app.HumanCustomSkillID','app.HumanCustomSkillLevelNo'},'System.String',jobId,id,rec.level)) end
+                    else
+                        rec.abilityId=id;rec.name=readable(static_get('app.GUIBase','getAbilityName',{'app.HumanAbilityID'},'System.String',id))
+                    end
+                    rec.nameStatus=rec.name and 'captured' or 'unavailable'
+                    return rec
+                end)
+                section.records[#section.records+1]=ok and record or {slot=slot.id,captureStatus='error',reason=tostring(record)}
+            end
+        end
+        r[spec[1]]=section
+    end
+    return r
+end
+local function active_quest_observations()
+    local qm=sdk.get_managed_singleton('app.QuestManager')
+    local list=field_value(qm,'app.QuestManager','CurrentActiveQuestIDList')
+    if not list then return unavailable('Active quest list unavailable') end
+    local td=list:get_type_definition()
+    local sf=td:get_field('_size');local af=td:get_field('_items')
+    local count=sf and sf:get_data(list);local items=af and af:get_data(list)
+    if type(count)~='number' or count<0 or count%1~=0 or not items or count>items:get_size() then
+        return unavailable('Active quest list inconsistent or unavailable')
+    end
+    local gui=sdk.get_managed_singleton('app.GuiManager')
+    local qlm=sdk.get_managed_singleton('app.QuestLogManager')
+    local tracked=safe_get(gui,'app.GuiManager','get_TargetQuestId',{},'app.QuestDefine.ID')
+    local r={captureStatus='partial',source='QuestManager.CurrentActiveQuestIDList',
+        count=count,truncated=count>64,activeRecords={},completeRoster=false,
+        trackedQuestId=type(tracked)=='number' and tracked>=0 and tracked or nil,
+        trackedStatus=tracked==-1 and 'none' or (type(tracked)=='number' and 'captured' or 'unavailable'),
+        completedHistory=unavailable('Completed record semantics not yet validated'),
+        absenceMeansNeverCompleted=false,lifetimeHistoryGuaranteed=false}
+    local function quest_record(id)
+            local progressing=safe_get(qlm,'app.QuestLogManager','isQuestLogProgressing',{'app.QuestDefine.ID'},'System.Boolean',id)
+            if type(progressing)~='boolean' then r.filterUnavailable=true end
+            if progressing~=true then return nil end
+            local view,err=safe_get(gui,'app.GuiManager','getQuestLog',{'app.QuestDefine.ID'},'app.QuestLogManager.QuestLogViewInfo',id)
+            if not view or scalar_field(view,'QuestId')~=id then return {questId=id,captureStatus='unavailable',reason=err or 'Quest view identity unavailable/mismatched'} end
+            local task=view:get_field('<Task>k__BackingField')
+            local progress=unavailable('Current task unavailable; no progress percentage inferred')
+            if task then
+                local function translate(fieldName)
+                    local ok,guid=pcall(function() return task:get_field(fieldName) end)
+                    return ok and guid and readable(static_get('app.MessageManager','getMessage',{'System.Guid'},'System.String',guid)) or nil
+                end
+                progress={captureStatus='partial',objective=translate('_BaseMsg'),detail=translate('_DetailMsg'),
+                    isTimed=scalar_field(task,'_IsTimed'),source='Verified progressing quest current Task',
+                    completionPercentage=unavailable('Not inferred from task text'),
+                    checklist=unavailable('Checklist counters/conditions not validated')}
+            end
+            return {questId=id,tracked=id==r.trackedQuestId,captureStatus='partial',progressingVerified=true,
+                title=readable(scalar_field(view,'QuestName')),summary=readable(scalar_field(view,'QuestSummary')),
+                progress=progress,rawStatus=scalar_field(view,'<Status>k__BackingField')}
+    end
+    r.trackedQuest=unavailable('No verified progressing tracked quest')
+    r.source='CurrentActiveQuestIDList filtered by QuestLogManager.isQuestLogProgressing'
+    local seen={}
+    for i=0,math.min(count,64)-1 do
+        local ok,rec=pcall(function()
+            local id=items:get_element(i)
+            if type(id)~='number' then id=scalar_field(id,'value__') or scalar_field(id,'m_value') end
+            if type(id)~='number' or id<0 or id%1~=0 or seen[id] then return nil end
+            seen[id]=true;return quest_record(id)
+        end)
+        if ok and rec then r.activeRecords[#r.activeRecords+1]=rec;if rec.questId==r.trackedQuestId then r.trackedQuest=rec end
+        elseif not ok then r.entryErrors=(r.entryErrors or 0)+1 end
+    end
+    if r.trackedQuestId and not seen[r.trackedQuestId] then
+        local ok,rec=pcall(quest_record,r.trackedQuestId)
+        if ok and rec then r.trackedQuest=rec end
+    end
+    if sf:get_data(list)~=count or af:get_data(list)~=items then return unavailable('Quest list changed while reading') end
+    if r.filterUnavailable then
+        r.filterStatus='partial or unavailable; omitted IDs are not confirmed inactive'
+        if #r.activeRecords==0 then r.captureStatus='unavailable' end
+    else r.filterStatus='captured for evaluated IDs' end
+    return r
+end
+local function native_area_observation()
+    local r={captureStatus='partial',source='AIAreaUtil player queries',displayName=unavailable('Localized area mapping pending validation'),
+        coordinateConversion='No coordinate mapping used',semanticsValidated=false}
+    for _,spec in ipairs({{'areaId','areaEnumLabel','getPlayerArea','app.AIAreaDefinition'},
+                         {'localAreaId','localAreaEnumLabel','getPlayerUILocalArea','app.AILocalAreaDefinition'}}) do
+        local td=sdk.find_type_definition('app.AIAreaUtil')
+        local selected
+        for _,m in ipairs(td and td.get_methods and td:get_methods() or {}) do
+            local rt=m:get_return_type()
+            if m:get_name()==spec[3] and m:get_num_params()==0 and m:is_static() and rt and rt:get_full_name()==spec[4] then
+                if selected then selected=nil;break end
+                selected=m
+            end
+        end
+        if selected then
+            local ok,id=pcall(function() return selected:call(nil) end)
+            if ok and type(id)=='number' and id>=0 and id%1==0 then
+                r[spec[1]]=id
+                for name,value in pairs(enum(spec[4])) do if id==value then r[spec[2]]=name end end
+            end
+        end
+    end
+    r.areaName=r.areaId and readable(static_get('app.GUIBase','getAIAreaName',{'app.AIAreaDefinition'},'System.String',r.areaId)) or nil
+    r.localAreaName=r.localAreaId and readable(static_get('app.GUIBase','getAILocalAreaName',{'app.AILocalAreaDefinition'},'System.String',r.localAreaId)) or nil
+    r.displayName=r.localAreaName or r.areaName or unavailable('Native localized name unavailable')
+    return r
+end
+local function gameplay_schema()
+    local r={captureStatus='partial',metadataOnly=true,methodsInvoked=false,types={}}
+    for _,name in ipairs({'app.Character','app.HitController','app.HitPointContext','app.HumanSkillContext',
+        'app.HumanSkillContext.SkillSlot','app.HumanSkillContext.EquipedSkill','app.AbilityContext',
+        'app.AbilityContext.AbilitySlot','app.AbilityContext.EquipedAbility','app.JobContext',
+        'app.GUIBase','app.GuiManager','app.QuestManager','app.QuestLogManager',
+        'app.QuestLogManager.QuestLogViewInfo','app.QuestLogManager.QuestLogInfo',
+        'app.QuestManager.QuestClearRecordData','app.QuestLogResource','app.QuestLogResource.QuestLogTaskData','app.QuestLogResource.QuestLogTaskCheckListData',
+        'app.AIAreaUtil','app.AIAreaManager','app.UIAreaManager','app.UIAreaMapData',
+        'app.MessageManager'}) do
+        local ok,value=pcall(describe_type,name,true)
+        r.types[name]=ok and value or {captureStatus='error',reason=tostring(value)}
+    end
+    return r
+end
 local function position(player)
     -- Established source: DD2 Content Editor devtools.lua player transform read path.
     local go=player:call('get_GameObject')
@@ -652,7 +866,7 @@ local function position(player)
 end
 local function write(result,kind)
     serial=serial+1
-    result.tool='AtlasSnapshot-DD2';result.version='0.11.0-experimental'
+    result.tool='AtlasSnapshot-DD2';result.version='0.13.0-experimental'
     result.capturedAtUtc=os.date('!%Y-%m-%dT%H:%M:%SZ')
     result.captureKind=kind;result.semanticsValidated=false
     local path='AtlasSnapshot-DD2-schema-latest.json'
@@ -676,6 +890,7 @@ local function capture()
     local result={captureStatus='unavailable',stats=unavailable('Player unavailable'),
         stamina=unavailable('Player unavailable'),vocation=unavailable('Player unavailable'),
         equipment=unavailable('Player unavailable'),position=unavailable('Player unavailable'),inventory=unavailable('Not probed'),
+        health=unavailable('Player unavailable'),skills=unavailable('Player unavailable'),location=unavailable('Player unavailable'),
         calculationEvidence=unavailable('Player unavailable'),
         characterTotals=unavailable('Player unavailable'),
         relationships=relationship_status(),
@@ -690,6 +905,12 @@ local function capture()
     local player=cm and pf and pf:get_data(cm)
     if player then
         result.captureStatus='partial'
+        for _,spec in ipairs({{'health',health_observation},{'skills',skill_observations},
+                              {'quests',active_quest_observations},{'location',native_area_observation}}) do
+            local ok,value=pcall(spec[2],player)
+            result[spec[1]]=ok and value or {captureStatus='error',reason=tostring(value)}
+        end
+        result.quests.absenceMeansNeverCompleted=false;result.quests.lifetimeHistoryGuaranteed=false
         result.calculationEvidence=calculation_evidence(cm)
         result.characterTotals=character_totals(cm,player)
         local npc_ok,npc_rel,npc_life=pcall(npc_observations)
@@ -734,6 +955,8 @@ re.on_frame(function()
         if startup then
             startup=false
             local result={captureStatus='partial',fields={},calculationTypes={}}
+            local discovery_ok,discovery=pcall(gameplay_schema)
+            result.gameplaySchema=discovery_ok and discovery or {captureStatus='error',reason=tostring(discovery)}
             local rel_ok,rel_value=pcall(relationship_schema)
             result.relationshipSchema=rel_ok and rel_value or {captureStatus='error',reason=tostring(rel_value)}
             for _,name in ipairs(calculation_types) do

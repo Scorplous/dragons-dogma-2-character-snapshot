@@ -6,7 +6,7 @@
 
 Experimental local character-observation exporter for **Dragon's Dogma 2** using REFramework. It writes JSON every five seconds for local tools and assistants. It does not deliberately change saves, equipment, affinity or NPC state. Runtime calculations are experimental and may fail as the game or framework changes.
 
-**Version 0.11.0-experimental.** This is not an official Capcom product. It targets DD2, not the original Dragon's Dogma: Dark Arisen.
+**Version 0.13.0-experimental.** This is not an official Capcom product. It targets DD2, not the original Dragon's Dogma: Dark Arisen.
 
 ## Why this is useful
 
@@ -14,14 +14,14 @@ This project grew out of playing DD2 while talking with ChatGPT by voice: asking
 
 It also makes less-visible relationship information easier to discuss. The relationship reader tries to present game rank labels as understandable attitudes while keeping the underlying values and unknowns visible. The stored-rank-to-label mapping has been observed working in a live v0.10 session; those labels do not establish romance or future behavior. For NPC history, the useful answer may be "we observed this NPC dead, but do not know the cause" rather than an invented account of what happened.
 
-You can ask about gear, captured vocation fields or equipment weight where the data supports an answer. For a comparison with an unequipped item, provide that item's details too: the exporter does not read your entire inventory. Party composition and skill loadouts also need extra context; this is not a complete party export or an optimal-build calculator.
+You can ask about gear, captured vocation fields or equipment weight where the data supports an answer. For a comparison with an unequipped item, provide that item's details too: the exporter does not read your entire inventory. Party composition still needs extra context; this is not a complete party export or an optimal-build calculator.
 
 ## Example: ask while you play
 
 1. **Let the game export.** Load your character with REFramework and the exporter running. It attempts a local snapshot every five seconds.
 2. **Give the assistant the relevant data.** Share the reader's output, or authorize the snapshot folder in an assistant environment that supports local file access. Voice is a convenient way to ask questions, but text works too.
 3. **Ask a question.** For example: "What do my current gear and stats suggest I should improve?", "What enhanced stats and weight are reported for my equipped weapon?", or "What relationship information do we have for this NPC?"
-4. **Have it check before advising.** Ask the assistant to read a fresh observation when possible, report its timestamp and availability, and use only the fields relevant to the question. Missing NPC records remain unknown. Raw coordinates can provide position context, but do not support verified map directions; quest progress and player-kill attribution are not available in this version.
+4. **Have it check before advising.** Ask the assistant to read a fresh observation when possible, report its timestamp and availability, and use only the fields relevant to the question. Missing NPC records remain unknown. Raw coordinates can provide position context, but do not support verified map directions; tracked quest objectives are available where verified, but checklist counters, lifetime quest completion and player-kill attribution remain unavailable.
 5. **Use the answer in play, then refresh when needed.** After changing equipment or returning later, ask it to check again or share a new file. Five-second exports are not an automatic stream into ChatGPT, and no background AI model silently watches each export.
 
 Saying "look at this" may also be useful in a separately configured assistant session that can take screenshots with your authorization. **Screenshot capture is not provided by this exporter.** A screenshot or an extra item tooltip can supplement the snapshot when your question needs information it does not contain.
@@ -46,6 +46,10 @@ Each section reports what could actually be read. Fields can be partial, unavail
 | --- | --- |
 | Equipped gear | Slot IDs and game enum labels, item IDs and game-resolved names. Base parameters are separate from game-calculated enhanced equipment parameters, calculated weight and weapon element where available. Numeric fields can include attack, magic, defence, knockdown-related values, damage types and resistances. Raw instance state is retained, but upgrade-level interpretation and units are not universally verified. Inventory and storage ownership counts are not captured. |
 | Character stats | Bounded raw status, stamina and vocation fields, including level-related observations and a current vocation label where resolved. Separate calculator records capture basic attack/defence and values incorporating equipment/buffs where the runtime methods work. These are experimental source values, not a guarantee that every number exactly matches the final character-screen formula. Item stats are not silently substituted for character totals. |
+| Health | Current HP, reduced maximum and original maximum from native character getters. Recoverable maximum and loss-gauge interpretation remain unverified; do not infer permanent loss from a current-HP deficit. |
+| Skills and vocation | Native localized current vocation and rank, equipped skill IDs/names/levels and augment IDs/names for runtime-reported slots. Duplicate slots are preserved; slot count is not assumed to equal the UI layout. Learned or owned skill lists are not substituted for equipped skills. |
+| Quests | Bounded candidate list filtered through the native progressing-quest check before reading titles. Marked quest identity is checked against its view; current objective and detail use native task messages where available. Checklist counters, completion percentages and lifetime completion remain unknown. Missing entries do not prove a quest was never completed. |
+| Named area | Native area and UI-local-area IDs, enum labels and resolved strings. Known v0.13 display issue: a technical local-area token can override a readable area name in displayName. Inspect areaName separately; a correction is staged but not yet live-tested. No map coordinates are inferred from these names. |
 | Position | Raw player world `x`, `y`, `z` coordinates without deliberate rounding. Coordinate units, axis directions, scene identity and conversion to a map grid are unverified or unavailable. A position does not establish that active gameplay is underway. |
 | NPC relationships | Verified character ID, game-resolved name where available, stored sentiment value and rank, temporary sentiment, group identifiers and current quest-layer classification. A rotating scan checks at most 128 holder-array slots and emits at most 32 NPC records per capture. This is neither a complete roster nor proof that you have encountered every listed NPC. |
 | NPC attitudes | The display attempts an exact match between the stored rank and runtime game enum labels, retaining the raw values. Missing or ambiguous matches produce "Unknown attitude." It does not invent affinity thresholds, percentages, romance status or intended behavior. The stored rank and runtime labels were matched successfully in a live v0.10 session; this does not validate behavioral interpretations or guessed thresholds. |
@@ -53,7 +57,7 @@ Each section reports what could actually be read. Fields can be partial, unavail
 | Crime | Up to 32 game character-group crime records, with their identifiers and runtime labels, where readable. These are separate from NPC affinity; group-to-town mappings and a universal town-reputation score are not established. |
 | NPC life observations | Explicit dead/coffin flag evidence and entity presence support bounded alive/dead observations after identity checks. An absent entity without a dead flag stays unknown. Records may include raw revival count and an observed entity position, with provenance and cause marked unknown. This does not identify who killed an NPC or where a death originally happened. |
 | Retained NPC evidence | Up to 128 entries from the game's retained NPC-history list: character IDs, raw flags and available enum labels, plus count/truncation information. The bounded list read was observed working in a live v0.10 session. Its runtime flag labels describe sub-NPC/costume classification. These flags are not a verified player-kill ledger and provide no established original event locations. |
-| Capture metadata | Exporter version, capture kind/status, UTC capture time, epoch timestamp, session ID, sequence number, refresh/staleness settings and source/error details. Startup schema metadata describes reflected fields and methods; it is not itself character progress. Quest progress and lifetime completion history are not read by this version. |
+| Capture metadata | Exporter version, capture kind/status, UTC capture time, epoch timestamp, session ID, sequence number, refresh/staleness settings and source/error details. Startup schema metadata describes reflected fields and methods; it is not itself character progress. Lifetime quest completion history is not read by this version. |
 
 ## Timing, freshness and history
 
@@ -66,6 +70,8 @@ The optional Windows history watcher maintains a separate local append-only jour
 ## Validation status
 
 The v0.9 equipment, coordinates, named NPC sentiment and history watcher were live-tested on Windows with Steam DD2 build **25290080** and REFramework **nightly-01432 / d052e8fd3fd41d0a1a33394fcf6e6c19be39b1ee**. This is an observed combination, not a general compatibility guarantee. **Live v0.10 validation confirmed advancing five-second captures, continued equipment/stat/position reads, stored NPC rank-to-label matching, bounded retained-history reads and the local journal watcher. Live v0.11 validation additionally confirmed main-pawn Character identity and separate favorability fields after correcting the Pawn/Character receiver mismatch; existing gear, character scalar stats, position, NPC rank mapping and journal continued working.** Some character calculator numeric-array elements also remain explicitly unavailable; no complete character-panel equivalence is claimed. Tests use synthetic data; they do not prove game behavior.
+
+Live v0.13 validation confirmed advancing five-second captures, readable health values, equipped skill and augment names, vocation name/rank, a progressing tracked quest objective, and a native broad-area name. Existing gear and bounded NPC readers continued working. Technical sub-area localization remains a known display limitation. These observations validate reads, not every gameplay interpretation.
 
 ## Install
 
