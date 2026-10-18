@@ -83,6 +83,10 @@ The v0.9 equipment, coordinates, named NPC sentiment and history watcher were li
 
 Live v0.13 validation confirmed advancing five-second captures, readable health values, equipped skill and augment names, vocation name/rank, a progressing tracked quest objective, and a native broad-area name. Existing gear and bounded NPC readers continued working. Technical sub-area localization remains a known display limitation. These observations validate reads, not every gameplay interpretation.
 
+## Download
+
+Download [AtlasSnapshot-DD2-v0.16.1-experimental.zip](https://github.com/Scorplous/dragons-dogma-2-character-snapshot/releases/tag/v0.16.1-experimental) from the release Assets, then extract it. SHA256SUMS.txt is provided for verification. REFramework must be installed separately. This package is the published v0.16.1 source; the later player-backpack update is not included.
+
 ## Install
 
 1. Back up your current saves and quit DD2 normally. Never modify the installed script while the game is running.
