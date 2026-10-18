@@ -1,143 +1,133 @@
 # Dragon's Dogma 2 Character Snapshot
 
-**AtlasSnapshot** creates local snapshots of your Dragon's Dogma 2 character so you can share concrete game observations with **ChatGPT** for gear comparisons, stat explanations and relationship discussions. You can also inspect the files yourself or use another compatible tool. [Public repository](https://github.com/Scorplous/dragons-dogma-2-character-snapshot).
+AtlasSnapshot writes local observations from Dragon's Dogma 2 so you can inspect them or share them with an assistant for gear, quest and relationship questions. Atlas is the original user's nickname for their assistant; it is not another product you must install.
 
-**Atlas is the original user's nickname for their AI assistant; AtlasSnapshot is this project's branding.** Atlas is not a separate AI product you need to install or subscribe to.
+**v0.21.0-candidate has passed scoped live-read checks and is prepared for experimental release.** It uses REFramework on Windows. It is experimental, unofficial and intended for DD2, not Dragon's Dogma: Dark Arisen. It does not deliberately change saves, gear, quests, affinity or NPC state. Game/framework updates can break reads.
 
-Experimental local character-observation exporter for **Dragon's Dogma 2** using REFramework. It writes JSON every five seconds for local tools and assistants. It does not deliberately change saves, equipment, affinity or NPC state. Runtime calculations are experimental and may fail as the game or framework changes.
+## Start here
 
-**Version 0.16.1-experimental.** This is not an official Capcom product. It targets DD2, not the original Dragon's Dogma: Dark Arisen.
+Download the source package and checksum from the [v0.21.0 experimental release](https://github.com/Scorplous/dragons-dogma-2-character-snapshot/releases/tag/v0.21.0-experimental). The exporter identifies itself as `0.21.0-candidate`; this release preserves the exact source used for the scoped live checks.
 
-## Why this is useful
+You need the game, a separately installed compatible REFramework build, and this project's source package. Python 3.10+ is needed only for the optional reader tools. No ChatGPT subscription, account or API key is needed to run the exporter. It has no network upload or automatic AI connection.
 
-This project grew out of playing DD2 while talking with ChatGPT by voice: asking the assistant to check the character's actual equipment and stats instead of repeatedly opening menus and reading numbers aloud. A snapshot reduces manual copying and gives the conversation a concrete reference, so advice can be tied to your captured gear and state rather than assumptions about a generic build.
-
-It also makes less-visible relationship information easier to discuss. The relationship reader tries to present game rank labels as understandable attitudes while keeping the underlying values and unknowns visible. The stored-rank-to-label mapping has been observed working in a live v0.10 session; those labels do not establish romance or future behavior. For NPC history, the useful answer may be "we observed this NPC dead, but do not know the cause" rather than an invented account of what happened.
-
-You can ask about gear, captured vocation fields or equipment weight where the data supports an answer. For a comparison with an unequipped item, provide that item's details too: the exporter does not read your entire inventory. Active pawn observations now include identities, owned gear and carried items; availability and skill-slot interpretation still need checking. This is not an optimal-build calculator.
-
-## Example: ask while you play
-
-1. **Let the game export.** Load your character with REFramework and the exporter running. It attempts a local snapshot every five seconds.
-2. **Give the assistant the relevant data.** Share the reader's output, or authorize the snapshot folder in an assistant environment that supports local file access. Voice is a convenient way to ask questions, but text works too.
-3. **Ask a question.** For example: "What do my current gear and stats suggest I should improve?", "What enhanced stats and weight are reported for my equipped weapon?", or "What relationship information do we have for this NPC?"
-4. **Have it check before advising.** Ask the assistant to read a fresh observation when possible, report its timestamp and availability, and use only the fields relevant to the question. Missing NPC records remain unknown. Raw coordinates can provide position context, but do not support verified map directions; tracked quest objectives are available where verified, but checklist counters, lifetime quest completion and player-kill attribution remain unavailable.
-5. **Use the answer in play, then refresh when needed.** After changing equipment or returning later, ask it to check again or share a new file. Five-second exports are not an automatic stream into ChatGPT, and no background AI model silently watches each export.
-
-Saying "look at this" may also be useful in a separately configured assistant session that can take screenshots with your authorization. **Screenshot capture is not provided by this exporter.** A screenshot or an extra item tooltip can supplement the snapshot when your question needs information it does not contain.
-
-## How ChatGPT fits in
-
-The exporter runs locally inside DD2 through REFramework and writes files independently of ChatGPT. **Running the exporter requires no ChatGPT account, subscription, OpenAI API key or automatic AI connection.** There is no built-in upload, ChatGPT plugin or background chat integration. Choosing to use ChatGPT for interpretation is a separate step, subject to the features available in your account and session.
-
-1. Install the exporter below, load your game and allow a snapshot to be written.
-2. Run `Read-latest-snapshot.py` to obtain a consistent observation with its availability and age. Its output includes the captured data or a clearly marked last-known snapshot. The relationships reader provides a smaller attitude-focused view.
-3. Share the reader's output with ChatGPT by pasting it or attaching a saved copy where file attachments are supported. OpenAI documents [sharing files and data exports with ChatGPT](https://learn.chatgpt.com/docs/use-chatgpt). Alternatively, if your particular assistant environment offers local file tools, explicitly authorize access to the relevant snapshot folder. This repository neither supplies nor enables that access; ordinary chats must not be assumed to read your computer.
-4. Ask a specific question, such as: "Explain the captured equipment stats, distinguish base values from enhanced values, and list anything unknown." Ask the assistant to preserve timestamps and uncertainty rather than fill missing fields with guesses.
-5. Share a new observation when the game changes. An attached copy does not update itself, and the five-second export interval does not refresh a ChatGPT conversation automatically.
-
-Only share data you intend the receiving service to process. A snapshot can contain character names, positions and NPC relationship or world-state information. Sharing source code alone does not give ChatGPT your current character data.
-
-## What a snapshot contains
-
-Each section reports what could actually be read. Fields can be partial, unavailable or in error; a section's presence does not mean every value is known. Missing values must not become zero, a clean bill of health, a dead NPC, or a never-completed quest.
-
-| Section | Exported observations and limits |
-| --- | --- |
-| Equipped gear | Slot IDs and game enum labels, item IDs and game-resolved names. Base parameters are separate from game-calculated enhanced equipment parameters, calculated weight and weapon element where available. Numeric fields can include attack, magic, defence, knockdown-related values, damage types and resistances. Raw instance state is retained, but upgrade-level interpretation and units are not universally verified. Inventory and storage ownership counts are not captured. |
-| Character stats | Bounded raw status, stamina and vocation fields, including level-related observations and a current vocation label where resolved. Separate calculator records capture basic attack/defence and values incorporating equipment/buffs where the runtime methods work. These are experimental source values, not a guarantee that every number exactly matches the final character-screen formula. Item stats are not silently substituted for character totals. |
-| Health | Current HP, reduced maximum and original maximum from native character getters. Recoverable maximum and loss-gauge interpretation remain unverified; do not infer permanent loss from a current-HP deficit. |
-| Skills and vocation | Native localized current vocation and rank, equipped skill IDs/names/levels and augment IDs/names for runtime-reported slots. Duplicate slots are preserved; slot count is not assumed to equal the UI layout. Learned or owned skill lists are not substituted for equipped skills. |
-| Quests | Bounded candidate list filtered through the native progressing-quest check before reading titles. Marked quest identity is checked against its view; current objective and detail use native task messages where available. Checklist counters, completion percentages and lifetime completion remain unknown. Missing entries do not prove a quest was never completed. |
-| Named area | Native area and UI-local-area IDs, enum labels and resolved strings. Known v0.13 display issue: a technical local-area token can override a readable area name in displayName. Inspect areaName separately; a correction is staged but not yet live-tested. No map coordinates are inferred from these names. |
-| Position | Raw player world `x`, `y`, `z` coordinates without deliberate rounding. Coordinate units, axis directions, scene identity and conversion to a map grid are unverified or unavailable. A position does not establish that active gameplay is underway. |
-| NPC relationships | Verified character ID, game-resolved name where available, stored sentiment value and rank, temporary sentiment, group identifiers and current quest-layer classification. A rotating scan checks at most 128 holder-array slots and emits at most 32 NPC records per capture. This is neither a complete roster nor proof that you have encountered every listed NPC. |
-| NPC attitudes | The display attempts an exact match between the stored rank and runtime game enum labels, retaining the raw values. Missing or ambiguous matches produce "Unknown attitude." It does not invent affinity thresholds, percentages, romance status or intended behavior. The stored rank and runtime labels were matched successfully in a live v0.10 session; this does not validate behavioral interpretations or guessed thresholds. |
-| Main pawn | Character ID resolved through the main pawn component's cached Character, plus raw `favorabilityRating` and `accumulatedFavorability` from the main pawn context. The affinity section does not resolve a name; the separate party section attempts pawn names. This is a separate scale from NPC sentiment; thresholds and normalization are unverified, so the display leaves pawn attitude unknown. The v0.11 receiver correction was live-verified across advancing captures: Character identity and both favorability fields were readable without the previous exception. The numbers are not percentages or verified attitude tiers. |
-| Crime | Up to 32 game character-group crime records, with their identifiers and runtime labels, where readable. These are separate from NPC affinity; group-to-town mappings and a universal town-reputation score are not established. |
-| NPC life observations | Explicit dead/coffin flag evidence and entity presence support bounded alive/dead observations after identity checks. An absent entity without a dead flag stays unknown. Records may include raw revival count and an observed entity position, with provenance and cause marked unknown. This does not identify who killed an NPC or where a death originally happened. |
-| Retained NPC evidence | Up to 128 entries from the game's retained NPC-history list: character IDs, raw flags and available enum labels, plus count/truncation information. The bounded list read was observed working in a live v0.10 session. Its runtime flag labels describe sub-NPC/costume classification. These flags are not a verified player-kill ledger and provide no established original event locations. |
-| Capture metadata | Exporter version, capture kind/status, UTC capture time, epoch timestamp, session ID, sequence number, refresh/staleness settings and source/error details. Startup schema metadata describes reflected fields and methods; it is not itself character progress. Lifetime quest completion history is not read by this version. |
-
-## Version 0.16.1 observations and limits
-
-- Active party: up to three pawns, main/recruited roles, names, vocation/rank, owner-checked equipment and separate carried items. Signed and unsigned 32-bit runtime identifiers are accepted; identity and ownership guards remain enforced.
-- Storage: bounded batches of 32 rows, up to 4096 scanned rows, with quantities, item identifiers and available calculated item values. Inn storage and pawn carried items are separate. Equipped items are excluded from carried records. Partial scans, changed lists and per-entry errors are explicit; absence never proves an item is not owned.
-- Skills: runtime getters return named slots, but six slots were observed per pawn. Which slots correspond to active equipped skills is not validated. Do not treat every returned entry as an active ability.
-- Inclination: raw enum IDs and labels only. Mapping to player-facing inclination labels is unvalidated.
-- Dragonsplague: raw possession field only; health, infection and transmission interpretation remain unknown. No automatic disease alerts are provided. Initial values, new recruits or uncertain changes must not be called confirmed transmission.
-- Area display: technical enum strings no longer override a readable broader area name.
-
-Live validation confirmed advancing v0.16.1 captures with all three pawn identities, an independently matching main-pawn identity, 18 owner-matched equipped records, and complete error-free carried scans with no overlap with equipped records. Unavailable equipment slots are not classified as empty. Inn storage remained partial (32 of 149 rows); full storage completion is not live validated. These observations do not establish DPS, UI-equivalent statistics, active skill selection or disease meaning. One startup hang preceded export initialization; a subsequent launch recovered, and its root cause is unknown. Synthetic regression results are separate from these live observations.
-## Timing, freshness and history
-
-The script attempts a character export every five seconds while its REFramework frame callback runs. It alternates between `AtlasSnapshot-DD2-slot-0.json` and `AtlasSnapshot-DD2-slot-1.json`, then publishes `AtlasSnapshot-DD2-latest.json` as a pointer to the completed slot. The pointer alone is not a character snapshot. Startup metadata goes to `AtlasSnapshot-DD2-schema-latest.json`.
-
-The reader checks the pointer twice and matches session, sequence and timestamp before returning data. It marks observations older than 15 seconds stale; partial writes and inconsistent files are rejected. A recent file is still an **unverified observation**, because player references can persist through menus or loading. Saved copies are historical evidence, not a live feed. The rotating slot files do not preserve every earlier capture.
-
-The optional Windows history watcher maintains a separate local append-only journal with deduplication and session boundaries. It currently journals verified life observations for the current quest-layer NPC subset, not all important NPCs. It cannot reconstruct events before observation, detect same-session save rollback or infer a resurrection from a dead-to-alive change alone. **Observed dead does not mean killed by the player.** A later NPC position is an observation location, and the player's current position cannot stand in for an original kill location.
-
-## Validation status
-
-The v0.9 equipment, coordinates, named NPC sentiment and history watcher were live-tested on Windows with Steam DD2 build **25290080** and REFramework **nightly-01432 / d052e8fd3fd41d0a1a33394fcf6e6c19be39b1ee**. This is an observed combination, not a general compatibility guarantee. **Live v0.10 validation confirmed advancing five-second captures, continued equipment/stat/position reads, stored NPC rank-to-label matching, bounded retained-history reads and the local journal watcher. Live v0.11 validation additionally confirmed main-pawn Character identity and separate favorability fields after correcting the Pawn/Character receiver mismatch; existing gear, character scalar stats, position, NPC rank mapping and journal continued working.** Some character calculator numeric-array elements also remain explicitly unavailable; no complete character-panel equivalence is claimed. Tests use synthetic data; they do not prove game behavior.
-
-Live v0.13 validation confirmed advancing five-second captures, readable health values, equipped skill and augment names, vocation name/rank, a progressing tracked quest objective, and a native broad-area name. Existing gear and bounded NPC readers continued working. Technical sub-area localization remains a known display limitation. These observations validate reads, not every gameplay interpretation.
-
-## Download
-
-Download [AtlasSnapshot-DD2-v0.16.1-experimental.zip](https://github.com/Scorplous/dragons-dogma-2-character-snapshot/releases/tag/v0.16.1-experimental) from the release Assets, then extract it. SHA256SUMS.txt is provided for verification. REFramework must be installed separately. This package is the published v0.16.1 source; the later player-backpack update is not included.
-
-## Install
-
-1. Back up your current saves and quit DD2 normally. Never modify the installed script while the game is running.
-2. Install an appropriate [official REFramework build](https://github.com/praydog/REFramework/releases). This repository contains no framework DLL, game binaries or assets. Framework compatibility is your responsibility; the tested version above is evidence, not a promise for other builds.
-3. Copy `src/AtlasSnapshot-DD2.lua` to `<DD2>/reframework/autorun/AtlasSnapshot-DD2-probe.lua`. Keep only one AtlasSnapshot autorun script active. For an existing installation, preserve the previous script before replacing it.
-4. Launch through Steam, load a save, and wait at least ten seconds in a safe location. Files appear under `<DD2>/reframework/data/`.
-
-Alternatively, `tools/Install.ps1` requires explicit `-GameDirectory`, `-SaveDirectory` (the Steam app's `2054970` folder), and `-BackupDirectory` outside this repository. It refuses a running game, backs up and hashes current saves, preserves the previous reader, installs only the Lua script, and verifies saves are unchanged. It never restores saves or installs REFramework.
-
-## Local readers
-
-Python 3.10+ is required for these optional local readers, not for the Lua exporter itself. Readers use the standard library; synthetic Lua tests additionally need Lupa. Set paths locally; do not commit your environment or generated data.
+1. **Close DD2 normally and back up your saves.** Keep the backup outside the game and project folders. Never replace the installed Lua script while DD2 is running.
+2. **Find the game folder.** In Steam, open DD2's Properties, then Installed Files, then Browse. The folder should contain `DD2.exe`.
+3. **Install REFramework separately.** Use the [current official releases](https://github.com/praydog/REFramework/releases) and [installation instructions](https://github.com/praydog/REFramework/blob/master/README.md). For non-VR use, those instructions specify extracting only `dinput8.dll` into the folder containing `DD2.exe`. Current nightlies use the monolithic `REFramework.zip`; do not assume a separate DD2 archive is always available. If REFramework already works, this exporter update does not require upgrading it. This package contains no framework DLL or game assets. See the tested configuration below; compatibility with other versions is not guaranteed.
+4. **Install one exporter.** Extract this project's package. Copy `src/AtlasSnapshot-DD2.lua` into `<DD2>\reframework\autorun\` and name the installed file `AtlasSnapshot-DD2-probe.lua`. Create `autorun` if necessary. Keep only one AtlasSnapshot Lua script active there. Preserve an existing script before replacing it.
+5. **Load a save and wait at least ten seconds in a safe place.** Exports appear in `<DD2>\reframework\data\`. The script attempts a new observation every five seconds while its frame callback runs.
+6. **Read the result.** Open PowerShell in the extracted project folder. Replace the example path below with the folder containing your `DD2.exe`:
 
 ```powershell
-$env:ATLAS_DD2_DATA_DIR = '<DD2>\reframework\data'
-$env:ATLAS_DD2_HISTORY_DIR = '<private local history folder>'
+$env:ATLAS_DD2_DATA_DIR = 'D:\YourSteamLibrary\steamapps\common\Dragons Dogma 2\reframework\data'
 python tools/Read-latest-snapshot.py
+# Optional: save an envelope to review or share.
+python tools/Read-latest-snapshot.py | Set-Content -Encoding utf8 snapshot-for-sharing.json
+```
+
+If `python` is unavailable, install Python 3.10+ separately and reopen PowerShell, or use your Python installation's executable path. Python is not required for the game to export files.
+
+The reader output should identify the snapshot version, age, availability and captured sections. `recent_unverified_observation` is expected: the overall reader does not certify every gameplay field merely because the file is fresh. `stale` means more than 15 seconds old (or a clock mismatch); `lastKnownSnapshot` is historical. `unavailable` means no consistent snapshot could be read. A section can independently be unavailable, partial or in error. Do not interpret any of those states as zero, absence or failure.
+
+If no files appear, check REFramework loaded, the single script's location, and that a save is loaded. If the reader reports unavailable, verify the data-folder path and give the exporter another interval. Do not attach `AtlasSnapshot-DD2-latest.json` alone: it is a publication pointer, not the character data. Do not reinstall or overwrite a running reader to refresh observations.
+
+### Optional installer with verified backups
+
+`tools/Install.ps1` requires the game folder, your Steam user's DD2 save folder named `2054970`, and a backup folder outside the project, game and save folders. Choose the correct Steam user; do not guess if multiple accounts exist. The installer refuses a running game, backs up and hashes save files, preserves the prior reader, copies only the Lua script, and verifies that saves were unchanged. It does not install REFramework or restore saves.
+
+Run from the extracted project folder, replacing all paths:
+
+```powershell
+.\tools\Install.ps1 -GameDirectory 'D:\YourSteamLibrary\steamapps\common\Dragons Dogma 2' -SaveDirectory 'C:\Program Files (x86)\Steam\userdata\YOUR_STEAM_USER\2054970' -BackupDirectory 'D:\PrivateBackups\DD2'
+```
+
+The game folder and save folder may be on different drives. If PowerShell blocks the script, the manual copy procedure above remains available; no system-wide policy change is required by this project. The installer preserves the expected target filename but does not detect every renamed duplicate script: check `autorun` yourself.
+
+## Use the observation with an assistant
+
+Share the saved reader output by pasting or attaching it where your assistant supports that, or explicitly authorize access to the snapshot folder in an environment with local file tools. An ordinary chat cannot be assumed to read your PC. Voice is an optional way to ask questions, not an automatic connection to the exporter. Source code alone does not contain your character data.
+
+Useful questions include: "Compare my captured equipped weapon with this item tooltip," "Which quests does the loaded journal mark Complete?", and "Explain this NPC's observed relationship values, including unknowns." Ask for the observation's age, section coverage and uncertainty before advice. Share a fresh observation after changes; an attachment does not update itself.
+
+Snapshots may expose character names, quest spoilers, positions, NPC relationships and world-state observations. Share only what you intend the receiving service to process. Screenshots are not captured by this exporter, but a manually shared screenshot can help compare the game's UI with an observation.
+
+## Current capabilities and limits
+
+| Section | Available observations | Limits |
+| --- | --- | --- |
+| Gear and character | Owner/slot-checked equipment, item names, base and game-calculated enhanced parameters, calculated weight, raw character fields and experimental character calculators | Not a complete character-screen formula or optimal-build calculator; units and upgrade interpretation are not universally verified |
+| Player backpack | Bounded owner-checked carried item rows and quantities, separated from equipped gear | Partial scans cannot prove an item is absent |
+| Inn storage and pawn bags | Independent bounded scans, item IDs, quantities and available item values; up to three active pawns with identities and owner-checked gear | Scan progress and errors matter; not all inventory locations form one guaranteed complete ownership ledger |
+| Health, vocation and skills | Native HP values, localized vocation/rank, runtime-reported skill and augment slots | HP loss interpretation and exact active skill-slot layout are not universally verified |
+| Current journal | Ordered native journal records classified as `nativeComplete`, `nativeProgressing` or `unknown`, with IDs/titles and gated completion report text | Observed loaded journal only; not universal current-cycle, lifetime or favorable-outcome history |
+| Active objectives | Identity-checked progressing/tracked quests and localized current-task text where readable | No checklist percentages, cutoff guarantees or inferred unlock conditions |
+| Area and position | Native area IDs/names and raw world coordinates; readable broad area preferred to technical tokens | No verified map grid, axis directions or navigation routing |
+| Relationships | Bounded NPC sentiment/rank observations and runtime rank labels; separate main-pawn favorability values; group crime records | No invented thresholds, romance status, disease diagnosis or universal town reputation |
+| NPC life/history | Identity-checked explicit life flags, entity presence and bounded retained history; optional local observation journal | No player-kill attribution, complete roster, original event location or reconstructed world history |
+
+RC wallet balance remains unavailable. Missing entries must never become claims that an item is not owned, an NPC is dead, or a quest was never completed.
+
+### Quest journal contract
+
+Prefer `quests.currentJournal` for usable journal observations. It is derived from the same bounded, identity-checked native evidence; it performs no extra game queries. Only ordered-log members are included. The five explicit investigation probes retained in `logStatusEvidence` are not journal membership or completion evidence.
+
+- `nativeComplete`: exactly one native enum label, `Complete`, with `nativeEnded=true` and `nativeProgressing=false`.
+- `nativeProgressing`: exactly one native enum label, `Progressing`, with `nativeProgressing=true` and `nativeEnded=false`.
+- `unknown`: missing/ambiguous labels, other native states or conflicting flags. Ended alone does not establish completion.
+
+Only `nativeComplete` receives available completion-report text in this view. That text is a native journal report, not proof of current NPC location/survival, romance, reward receipt, favorable branch or cutoff safety. No state is mapped to a failure outcome. Missing report text leaves the native classification intact.
+
+Legacy `quests.logStatusEvidence` fields are retained for compatibility. Its `report`, `impossible` and `impossibleDetail` are **diagnostic templates**, not realized outcomes. Populated Impossible/Discontinued templates were observed even on Complete and Progressing quests. Template objects now carry explicit diagnostic labels; never use template text alone to conclude success or failure.
+
+Journal coverage includes list count, bounded entries examined, truncation, ordered-entry errors and `scanComplete`; failures of unrelated explicit probes do not reduce journal coverage. A complete scan means the observed bounded collection was read, not that all quests in the game or earlier playthroughs are known. Session and capture time accompany the view. Phase/source changes or player loss withhold it rather than retaining an old journal as current.
+
+`quests.completedHistory.rawRecords` remains raw clear-counter evidence. Retained positive clear counts were observed alongside currently progressing journal states, so counters are not used to classify this loaded journal. Negative IDs, identity mismatches, invalid counts, duplicate IDs and read failures remain categorized diagnostics. `allSlotsExamined` means traversal finished; `validRecordsComplete` and legacy `scanComplete` additionally require error-free matching coverage. A negative-ID row is not silently accepted as a known sentinel. Missing rows do not establish never-completed status.
+
+`currentPlaythroughValidated=false`, unknown lifetime history and unknown outcomes remain intentional. No claim is made that every NG+ transition or every quest resets these sources identically.
+
+## Freshness and optional history
+
+The exporter alternates two slot files and publishes `AtlasSnapshot-DD2-latest.json` only after a slot write succeeds. The reader checks the pointer twice and matches session, sequence and timestamp. Startup schema metadata is not character progress. Saved copies and stale observations are historical; two rotating slots are not a permanent history archive.
+
+Optional readers use Python's standard library:
+
+```powershell
 python tools/Read-relationship-attitudes.py
+$env:ATLAS_DD2_HISTORY_DIR = 'D:\PrivateHistory\DD2'
 python tools/Watch-NPC-history.py
 ```
 
-The history directory defaults to `.atlas-dd2` under your home folder. The watcher is Windows-only and runs until `stop-npc-history.txt` is created in that directory, or its process is stopped. Remove that stop file yourself before a deliberate restart. Its lock prevents duplicate writers. It is not automatically scheduled at startup.
+The Windows-only watcher records a bounded NPC observation subset, not all NPCs or quests. Its default history folder is `.atlas-dd2` in your home folder if no path is supplied. Stop it with Ctrl+C or create `stop-npc-history.txt` in that history folder; remove that stop file before a deliberate restart. It is not automatically scheduled. It cannot reconstruct earlier events or detect same-session save rollback. Dead-to-alive does not alone prove resurrection; observed dead does not mean killed by the player.
 
-`Read-latest-snapshot.py` also accepts the data directory as its first argument. It checks the publication pointer twice and validates session/sequence/time. Observations older than 15 seconds are stale. Even fresh observations do not prove the game is in active gameplay: a player reference can survive loading/menu transitions. `Read-relationship-attitudes.py --snapshot <saved-envelope.json>` explicitly treats a saved file as historical.
+## Validation status
 
-## Disable and rollback
+The historical tested Windows combination was Steam DD2 build **25290080** and REFramework **nightly-01432 / d052e8fd3fd41d0a1a33394fcf6e6c19be39b1ee**. This is one observed configuration, not a compatibility promise.
 
-Quit DD2 normally. Rename only `reframework/autorun/AtlasSnapshot-DD2-probe.lua` to a filename ending in `.disabled`, or move it outside `autorun`. This disables this exporter. REFramework is a separately installed dependency; consult its own instructions to disable it.
+Earlier live versions observed advancing captures, owner-checked gear, character fields, coordinates, NPC rank labels, main-pawn identity/favorability, health/vocation/skills, active objectives, player-backpack scans and three active pawn bags. Inn storage can remain partial. Skill-slot meaning, complete UI-stat equivalence and many gameplay interpretations remain unvalidated. One prior startup hang occurred before export initialization; its cause was not established.
 
-To roll back an update, quit DD2, preserve the current script, and copy the previously backed-up **Lua script only** back to the autorun path. Do not restore old saves as part of an exporter rollback. The optional installer prints its backup location and stores before/after hashes there. No automatic destructive rollback is included.
+**v0.20 live evidence:** native ordered-journal statuses and localized text were readable; Complete and Progressing states were distinguishable, clear counts could remain positive for progressing quests, generic failure templates appeared on non-failed states, invalid clear-record IDs remained rejected, and player loss cleared current evidence. These observations support the narrow view above, not universal NG+ semantics. No private quest identities or captured text are included here.
 
-## Data limits and privacy
+**v0.21 candidate:** all 21 synthetic regression modules and source-syntax validation passed. After installation, fresh same-session exports advanced, the derived journal matched ordered native membership and exact native status/flag gates, and completion text remained restricted to native Complete records. Populated failure templates remained diagnostic; invalid clear IDs retained partial-validity coverage despite completed slot traversal. Equipped items, the player backpack, three companion bags and a completed inn-storage scan remained readable without inventory entry errors. These are scoped native-read observations, not a performance benchmark or universal gameplay validation. The visible game journal was not independently compared during this run; that UI comparison and universal NG+ behavior remain unverified. Private captures are not bundled.
 
-Snapshots may contain character names, NPC relationship values, locations and world-state observations. Keep them private unless you intentionally choose to share them. No network upload is built into the exporter or readers. This source repository must not contain saves, screenshots, snapshots, journals, machine-specific manifests, credentials or proprietary assets.
+## Disable or roll back
 
-The history records observations across sessions without treating them as a reconstructed current-world ledger. Same-session save rollback detection is unavailable. A dead-to-alive change alone does not prove resurrection. A past player kill requires retained attribution and event-location evidence that this version has not established. Retained NPC flags remain raw evidence, not an inferred kill history.
+Quit DD2 normally. Rename `reframework/autorun/AtlasSnapshot-DD2-probe.lua` to end in `.disabled`, or move it outside `autorun`. This disables this exporter only; REFramework is separate. To roll back an update, preserve the current script and restore the previously backed-up **Lua script only**. Do not restore old saves as part of exporter rollback. Stop any separately started history watcher if no longer needed.
 
-## Tests
+## Tests and source privacy
 
 ```powershell
 python -m pip install -r requirements-test.txt
 python tests/run_tests.py
 ```
 
-The suite checks signature selection, value-type dispatch, failure isolation, bounded coverage, stale/partial files, identity mismatches, unknown affinity, history deduplication and attribution/location separation. No in-game killing or save modification is required.
+Tests use synthetic game objects through Lupa. They cover signatures, identity/ownership, failure isolation, freshness, bounded coverage, concurrency, unknown semantics, journal membership and status-gated reports. No in-game actions or save edits are needed. Do not commit saves, screenshots, snapshots, journals, local install manifests, credentials or proprietary assets.
 
-## References and license status
+## References and licensing
 
+- [Public repository](https://github.com/Scorplous/dragons-dogma-2-character-snapshot)
 - [REFramework API documentation](https://cursey.github.io/reframework-book/)
-- [ValueType call implementation in the tested framework](https://github.com/praydog/REFramework/blob/d052e8fd3fd41d0a1a33394fcf6e6c19be39b1ee/src/mods/bindings/Sdk.cpp): value-type instance calls need the framework's boxed receiver path.
-- [DD2 Content Editor](https://github.com/kagenocookie/dd2-content-editor): reference for reflected fields, equipment/name and transform access.
-- [MyDD2Mod](https://github.com/xyzkljl1/MyDD2Mod) and [DD2-LUAModFixes](https://github.com/Zharay/DD2-LUAModFixes): reference for NPC name lookup and current quest-layer identification.
+- [DD2 Content Editor](https://github.com/kagenocookie/dd2-content-editor)
+- [MyDD2Mod](https://github.com/xyzkljl1/MyDD2Mod) and [DD2-LUAModFixes](https://github.com/Zharay/DD2-LUAModFixes)
+- [.NET Dictionary implementation](https://raw.githubusercontent.com/dotnet/runtime/main/src/libraries/System.Private.CoreLib/src/System/Collections/Generic/Dictionary.cs), a layout reference rather than proof of DD2 quest semantics
 
-Third-party source, binaries and assets are not bundled. Dependencies retain their own licenses. **No license has yet been selected for this project's source. Public visibility alone does not grant a broad reuse license.**
+Third-party source, binaries and game assets are not bundled. Dependencies retain their own licenses. No license has yet been selected for this project's source; public visibility alone does not grant broad reuse rights.
+

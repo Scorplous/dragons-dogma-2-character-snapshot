@@ -1,4 +1,4 @@
--- AtlasSnapshot 0.16.1. Read-only active party, owned gear and carried items; pending live validation.
+-- AtlasSnapshot 0.21.0-candidate. Status-gated loaded journal; no lifetime/NG+ guarantee.
 -- Field names confirmed by the first live probe; semantics remain unvalidated.
 local startup, requested, serial = true, false, 0
 local next_refresh=os.time()+5
@@ -123,11 +123,11 @@ local function describe_type(name,focus)
     end
     if td.get_methods then
         for i,m in ipairs(td:get_methods()) do
-            if (not focus and i>256) or #r.methods>=256 then r.methodsTruncated=true;break end
+            if (not focus and i>256) or (type(focus)=='table' and i>4096) or #r.methods>=256 then r.methodsTruncated=true;break end
             local selected=not focus
             if focus then
                 local label=m:get_name():lower()
-                for _,word in ipairs({'sentiment','favor','pawn','npc','name','dead','death','kill','reviv','resurrect','crime','town','area','reputation','context','holder','hp','health','recover','loss','skill','ability','job','quest','location','rank','title','task','log','message'}) do
+                for _,word in ipairs(type(focus)=='table' and focus or {'sentiment','favor','pawn','npc','name','dead','death','kill','reviv','resurrect','crime','town','area','reputation','context','holder','hp','health','recover','loss','skill','ability','job','quest','location','rank','title','task','log','message'}) do
                     if label:find(word,1,true) then selected=true;break end
                 end
             end
@@ -743,6 +743,219 @@ local function skill_observations(player)
     end
     return r
 end
+-- Evidence capture, not a claim of current-cycle or lifetime completion.
+-- Runtime schema confirms these fields; live UI comparison must establish scope.
+local function quest_clear_observations()
+    local flow=sdk.get_managed_singleton('app.MainFlowManager')
+    if safe_get(flow,'app.MainFlowManager','get_IsInGamePhase',{},'System.Boolean')~=true then
+        return unavailable('Loaded in-game phase not verified')
+    end
+    local qm=sdk.get_managed_singleton('app.QuestManager')
+    local dict=field_value(qm,'app.QuestManager','QuestClearRecordDict')
+    if not dict then return unavailable('Quest clear dictionary unavailable') end
+    local function integer(v) return type(v)=='number' and v==v and v>=0 and v<=2147483647 and v%1==0 end
+    local count,free,version=scalar_field(dict,'_count'),scalar_field(dict,'_freeCount'),scalar_field(dict,'_version')
+    local entries=dict:get_field('_entries')
+    if not integer(count) or not integer(free) or free>count or not integer(version) or
+        (count>0 and (not entries or count>entries:get_size())) then
+        return unavailable('Quest clear dictionary bounds unavailable or inconsistent')
+    end
+    local r={captureStatus='partial',semanticsValidated=false,source='app.QuestManager.QuestClearRecordDict',
+        session=session,capturedAtEpoch=os.time(),playthroughScope='unknown',
+        currentPlaythrough=unavailable('Clear-record reset/carryover behavior in New Game Plus not validated'),
+        previousCycles=unavailable('No validated previous-cycle or lifetime history source'),
+        absenceMeansNeverCompleted=false,lifetimeHistoryGuaranteed=false,favorableOutcomeInferred=false,
+        limitations={'Raw clear counts are not a validated current-playthrough completion list',
+            'Quest completion does not establish branch outcome, NPC survival, rewards, or cutoff safety',
+            'Counts and titles require live verification; missing titles preserve quest IDs'}}
+    local raw={captureStatus='partial',records={},allocatedSlots=count,expectedLiveEntries=count-free,
+        examinedSlots=math.min(count,512),truncated=count>512,entryErrors=0,entryDiagnostics={},errorReasonCounts={},
+        scanComplete=false,allSlotsExamined=false,validRecordsComplete=false,
+        collectionLayout='CoreLib dictionary next >= -1; live layout validation pending'}
+    r.rawRecords=raw
+    local seen,observed={},{}
+    local gui=sdk.get_managed_singleton('app.GuiManager')
+    for i=0,math.min(count,512)-1 do
+        local diagnostic={slot=i}
+        local ok,rec=pcall(function()
+            local function invalid(code)
+                diagnostic.reasonCode=code;error(code)
+            end
+            local e=entries:get_element(i)
+            local nextValue=scalar_field(e,'next')
+            diagnostic.nextValue=nextValue;diagnostic.key=scalar_field(e,'key')
+            if type(nextValue)~='number' or nextValue%1~=0 or nextValue < -2147483648 or nextValue>=count then invalid('invalidEntryLink') end
+            if nextValue < -1 then return nil end
+            local id=scalar_field(e,'key');local value=e:get_field('value')
+            local rid=scalar_field(value,'_QuestID');local clears=scalar_field(value,'_ClearCount')
+            diagnostic.recordQuestId=rid;diagnostic.rawClearCount=clears
+            if not integer(id) then invalid('invalidQuestId') end
+            if id~=rid then invalid('recordIdentityMismatch') end
+            if not integer(clears) then invalid('invalidClearCount') end
+            if seen[id] then invalid('duplicateQuestId') end
+            seen[id]=true
+            observed[#observed+1]={slot=i,value=value,id=id,count=clears,nextValue=nextValue}
+            local record={questId=id,rawClearCount=clears,playthroughScope='unknown',
+                completionStatus='unvalidated',outcome='unknown',titleStatus='unavailable'}
+            local view=safe_get(gui,'app.GuiManager','getQuestLog',{'app.QuestDefine.ID'},'app.QuestLogManager.QuestLogViewInfo',id)
+            if view and scalar_field(view,'QuestId')==id then
+                record.title=readable(scalar_field(view,'QuestName'))
+                if record.title then record.titleStatus='captured' end
+            end
+            return record
+        end)
+        if not ok then raw.entryErrors=raw.entryErrors+1
+            diagnostic.reasonCode=diagnostic.reasonCode or 'readError'
+            raw.errorReasonCounts[diagnostic.reasonCode]=(raw.errorReasonCounts[diagnostic.reasonCode] or 0)+1
+            diagnostic.reason=tostring(rec);if #raw.entryDiagnostics<16 then raw.entryDiagnostics[#raw.entryDiagnostics+1]=diagnostic end
+        elseif rec then raw.records[#raw.records+1]=rec end
+    end
+    -- Recheck values as well as version: Dictionary removals/value replacements may
+    -- not increment version. No cross-capture cache or save mutation is used.
+    for _,o in ipairs(observed) do
+        local e=entries:get_element(o.slot)
+        local value=e and e:get_field('value')
+        if not e or scalar_field(e,'key')~=o.id or scalar_field(e,'next')~=o.nextValue or value~=o.value or
+            scalar_field(value,'_QuestID')~=o.id or scalar_field(value,'_ClearCount')~=o.count then
+            return unavailable('Quest clear records changed while reading')
+        end
+    end
+    if sdk.get_managed_singleton('app.QuestManager')~=qm or field_value(qm,'app.QuestManager','QuestClearRecordDict')~=dict or
+        dict:get_field('_entries')~=entries or scalar_field(dict,'_count')~=count or scalar_field(dict,'_freeCount')~=free or
+        scalar_field(dict,'_version')~=version or safe_get(flow,'app.MainFlowManager','get_IsInGamePhase',{},'System.Boolean')~=true then
+        return unavailable('Quest clear source changed while reading')
+    end
+    raw.scanComplete=not raw.truncated and raw.entryErrors==0 and #raw.records==count-free
+    raw.allSlotsExamined=not raw.truncated
+    raw.validRecordsComplete=raw.scanComplete
+    raw.captureStatus=raw.scanComplete and 'captured' or 'partial'
+    return r
+end
+-- Independent of clear counters. Native ended/status labels are evidence, not
+-- successful completion or proof that this list is isolated to the current cycle.
+local function quest_log_evidence()
+    local flow=sdk.get_managed_singleton('app.MainFlowManager')
+    if safe_get(flow,'app.MainFlowManager','get_IsInGamePhase',{},'System.Boolean')~=true then return unavailable('In-game phase not verified') end
+    local qlm=sdk.get_managed_singleton('app.QuestLogManager')
+    local list=field_value(qlm,'app.QuestLogManager','_OrderedQuestList')
+    if not list then return unavailable('Ordered quest-log list unavailable') end
+    local count,version=scalar_field(list,'_size'),scalar_field(list,'_version')
+    local items=list:get_field('_items')
+    if type(count)~='number' or count<0 or count%1~=0 or count>2147483647 or type(version)~='number' or
+        not items or count>items:get_size() then return unavailable('Quest-log bounds unavailable') end
+    local r={captureStatus='partial',source='QuestLogManager._OrderedQuestList and identity-checked GuiManager.getQuestLog',
+        capturedAtEpoch=os.time(),session=session,records={},entryErrors=0,orderedEntryErrors=0,entryDiagnostics={},
+        listCount=count,examinedListEntries=math.min(count,256),truncated=count>256,scanComplete=false,
+        semanticsValidated=false,currentPlaythroughValidated=false,absenceMeansNeverCompleted=false,
+        completionStatus='unknown',playthroughScope='unknown',
+        limitations={'Native ended status does not establish success or favorable outcomes',
+            'Current-cycle reset and list coverage require live comparison',
+            'Explicit probes are not proof of membership in the ordered log'}}
+    local labels=enum('app.QuestLogManager.QuestStatus')
+    local gui=sdk.get_managed_singleton('app.GuiManager')
+    local ids,seen,listIds,observed={},{},{},{}
+    for i=0,math.min(count,256)-1 do
+        local id=items:get_element(i)
+        if type(id)~='number' then id=scalar_field(id,'value__') or scalar_field(id,'m_value') end
+        if type(id)~='number' or id<0 or id>2147483647 or id%1~=0 then return unavailable('Invalid quest-log ID') end
+        listIds[i+1]=id
+        if not seen[id] then seen[id]=true;ids[#ids+1]={id=id,origin='ordered log'} end
+    end
+    -- Small explicit investigation set; never treated as completed or as list members.
+    for _,id in ipairs({30100,30110,20082,30040,30070}) do
+        if not seen[id] then seen[id]=true;ids[#ids+1]={id=id,origin='explicit diagnostic probe'} end
+    end
+    for _,candidate in ipairs(ids) do
+        local id=candidate.id
+        local ok,rec=pcall(function()
+            local view=safe_get(gui,'app.GuiManager','getQuestLog',{'app.QuestDefine.ID'},'app.QuestLogManager.QuestLogViewInfo',id)
+            if not view or scalar_field(view,'QuestId')~=id then error('Missing or mismatched quest view') end
+            local status=scalar_field(view,'<Status>k__BackingField')
+            if type(status)~='number' or status%1~=0 then error('Quest status unavailable') end
+            local names={};for name,value in pairs(labels) do if value==status then names[#names+1]=name end end;table.sort(names)
+            local progressing=safe_get(qlm,'app.QuestLogManager','isQuestLogProgressing',{'app.QuestDefine.ID'},'System.Boolean',id)
+            local ended=safe_get(qlm,'app.QuestLogManager','isQuestLogEnd',{'app.QuestDefine.ID'},'System.Boolean',id)
+            local record={questId=id,origin=candidate.origin,title=readable(scalar_field(view,'QuestName')),
+                rawStatus=status,statusEnumLabels=names,nativeProgressing=progressing,nativeEnded=ended,
+                completionStatus='unknown',outcome='unknown',playthroughScope='unknown',
+                impossibleDetail=readable(scalar_field(view,'<QuestImpossibleDetailMsg>k__BackingField')),
+                reportInterpretation='diagnostic templates only; use currentJournal for gated text'}
+            local function reportText(fieldName)
+                local data=view:get_field(fieldName)
+                if not data then return unavailable('No report object observed; no outcome inferred') end
+                local function textOf(n)
+                    local guid=data:get_field(n)
+                    return guid and readable(static_get('app.MessageManager','getMessage',{'System.Guid'},'System.String',guid)) or nil
+                end
+                return {captureStatus='partial',base=textOf('_BaseMsg'),detail=textOf('_DetailMsg'),
+                    diagnosticTemplate=true,provesOutcome=false}
+            end
+            for _,spec in ipairs({{'report','<Report>k__BackingField'},{'impossible','<Impossible>k__BackingField'}}) do
+                local text_ok,value=pcall(reportText,spec[2])
+                record[spec[1]]=text_ok and value or unavailable('Report text read failed; status retained')
+            end
+            observed[#observed+1]={id=id,status=status,progressing=progressing,ended=ended}
+            return record
+        end)
+        if ok then r.records[#r.records+1]=rec else
+            r.entryErrors=r.entryErrors+1
+            if candidate.origin=='ordered log' then r.orderedEntryErrors=r.orderedEntryErrors+1 end
+            if #r.entryDiagnostics<16 then r.entryDiagnostics[#r.entryDiagnostics+1]={questId=id,origin=candidate.origin,reason=tostring(rec)} end
+        end
+    end
+    for _,o in ipairs(observed) do
+        local view=safe_get(gui,'app.GuiManager','getQuestLog',{'app.QuestDefine.ID'},'app.QuestLogManager.QuestLogViewInfo',o.id)
+        if not view or scalar_field(view,'QuestId')~=o.id or scalar_field(view,'<Status>k__BackingField')~=o.status or
+            safe_get(qlm,'app.QuestLogManager','isQuestLogProgressing',{'app.QuestDefine.ID'},'System.Boolean',o.id)~=o.progressing or
+            safe_get(qlm,'app.QuestLogManager','isQuestLogEnd',{'app.QuestDefine.ID'},'System.Boolean',o.id)~=o.ended then
+            return unavailable('Quest-log status changed while reading')
+        end
+    end
+    for i,id in ipairs(listIds) do
+        local current=items:get_element(i-1)
+        if type(current)~='number' then current=scalar_field(current,'value__') or scalar_field(current,'m_value') end
+        if current~=id then return unavailable('Quest-log IDs changed while reading') end
+    end
+    if sdk.get_managed_singleton('app.QuestLogManager')~=qlm or field_value(qlm,'app.QuestLogManager','_OrderedQuestList')~=list or
+        list:get_field('_items')~=items or scalar_field(list,'_size')~=count or scalar_field(list,'_version')~=version or
+        safe_get(flow,'app.MainFlowManager','get_IsInGamePhase',{},'System.Boolean')~=true then return unavailable('Quest-log source changed while reading') end
+    r.scanComplete=not r.truncated and r.entryErrors==0
+    return r
+end
+-- A presentation of the observed loaded journal, not a reconstructed history.
+local function current_journal(evidence)
+    if not evidence or not evidence.records or evidence.captureStatus=='unavailable' or evidence.captureStatus=='error' then
+        return unavailable('Quest-log evidence unavailable; no prior journal retained')
+    end
+    local r={captureStatus='partial',source=evidence.source,session=evidence.session,capturedAtEpoch=evidence.capturedAtEpoch,
+        records={},nativeComplete={},nativeProgressing={},unknown={},listCount=evidence.listCount,
+        examinedListEntries=evidence.examinedListEntries,truncated=evidence.truncated,
+        entryErrors=evidence.orderedEntryErrors,scanComplete=not evidence.truncated and evidence.orderedEntryErrors==0,
+        playthroughScope='observed loaded quest journal',currentPlaythroughValidated=false,
+        lifetimeHistoryGuaranteed=false,absenceMeansNeverCompleted=false,favorableOutcomeInferred=false,
+        limitations={'Native journal classification is not universal NG+ reset or lifetime history validation',
+            'Completion report text does not establish rewards, NPC survival or favorable outcomes',
+            'Unknown or conflicting native states remain unclassified; explicit probes are excluded'}}
+    for _,e in ipairs(evidence.records) do
+        if e.origin=='ordered log' then
+            local state='unknown'
+            if #e.statusEnumLabels==1 then
+                if e.statusEnumLabels[1]=='Complete' and e.nativeEnded==true and e.nativeProgressing==false then state='nativeComplete'
+                elseif e.statusEnumLabels[1]=='Progressing' and e.nativeProgressing==true and e.nativeEnded==false then state='nativeProgressing' end
+            end
+            local record={questId=e.questId,title=e.title,titleStatus=e.title and 'captured' or 'unavailable',
+                journalState=state,orderedLogMember=true,rawStatus=e.rawStatus,statusEnumLabels=e.statusEnumLabels,
+                nativeProgressing=e.nativeProgressing,nativeEnded=e.nativeEnded,outcome='unknown',
+                completionReport=unavailable('No completion report presented for this native state')}
+            if state=='nativeComplete' and e.report and (e.report.base or e.report.detail) then
+                record.completionReport={captureStatus=e.report.captureStatus,base=e.report.base,detail=e.report.detail,
+                    source='Native Complete journal report',provesFavorableOutcome=false}
+            elseif state=='nativeComplete' then record.completionReport=unavailable('Native completion report text unavailable') end
+            r.records[#r.records+1]=record;r[state][#r[state]+1]=record
+        end
+    end
+    return r
+end
 local function active_quest_observations()
     local qm=sdk.get_managed_singleton('app.QuestManager')
     local list=field_value(qm,'app.QuestManager','CurrentActiveQuestIDList')
@@ -843,7 +1056,8 @@ local function gameplay_schema()
         'app.HumanSkillContext.SkillSlot','app.HumanSkillContext.EquipedSkill','app.AbilityContext',
         'app.AbilityContext.AbilitySlot','app.AbilityContext.EquipedAbility','app.JobContext',
         'app.GUIBase','app.GuiManager','app.QuestManager','app.QuestLogManager',
-        'app.QuestLogManager.QuestLogViewInfo','app.QuestLogManager.QuestLogInfo',
+        'app.QuestLogManager.QuestLogViewInfo','app.QuestLogManager.QuestLogInfo','app.QuestLogManager.QuestStatus',
+        'app.QuestLogResource.QuestLogReportData','app.QuestLogResource.QuestLogImpossibleData','app.QuestLogResource.QuestLogInfoDataBase',
         'app.QuestManager.QuestClearRecordData','app.QuestLogResource','app.QuestLogResource.QuestLogTaskData','app.QuestLogResource.QuestLogTaskCheckListData',
         'app.AIAreaUtil','app.AIAreaManager','app.UIAreaManager','app.UIAreaMapData',
         'app.MessageManager'}) do
@@ -855,7 +1069,9 @@ end
 -- Storage owner and accessor documented by MyDD2Mod and Inventory-Manager.
 -- Only the read accessor is used; no transfer, grant, delete or quantity setters.
 local storage_scans={}
-local function stored_items(carriedOwner,identity)
+local player_inventory_scans={}
+local function stored_items(carriedOwner,identity,scanCache)
+    local storage_scans=scanCache or storage_scans
     local owner=carriedOwner or 65535
     local manager=sdk.get_managed_singleton('app.ItemManager')
     local listType='System.Collections.Generic.List`1<app.ItemManager.StorageMasterData>'
@@ -926,6 +1142,22 @@ local function stored_items(carriedOwner,identity)
         consistency='List version checked; individual item values can change across batches',
         atomicSnapshot=false,ownershipSemanticsLiveValidated=false,
         absenceMeansNotOwned=false,scope=carriedOwner and 'Carried items only; equipped items excluded' or 'Inn storage only; not carried or pawn inventory'}
+end
+local function player_inventory(player)
+    local expected=enum('app.CharacterID').ch000000_00
+    local character=field_value(player,'app.Human','<Chara>k__BackingField')
+    local id=safe_get(character,'app.Character','get_CharaID',{},'app.CharacterID')
+    if type(expected)~='number' or expected%1~=0 or expected < -2147483648 or expected>4294967295 or
+       expected==65535 or id~=expected then
+        player_inventory_scans={};return unavailable('Player inventory identity unavailable or mismatched')
+    end
+    local result=stored_items(id,character,player_inventory_scans)
+    if safe_get(character,'app.Character','get_CharaID',{},'app.CharacterID')~=id or
+       field_value(player,'app.Human','<Chara>k__BackingField')~=character then
+        player_inventory_scans={};return unavailable('Player identity changed during inventory capture')
+    end
+    result.scope='Player carried items only; equipped items, pawn bags and inn storage excluded'
+    return result
 end
 -- Active roster only. A cached Human is trusted only after matching character IDs.
 local function party_observations()
@@ -1031,7 +1263,7 @@ local function position(player)
 end
 local function write(result,kind)
     serial=serial+1
-    result.tool='AtlasSnapshot-DD2';result.version='0.16.1-experimental'
+    result.tool='AtlasSnapshot-DD2';result.version='0.21.0-candidate'
     result.capturedAtUtc=os.date('!%Y-%m-%dT%H:%M:%SZ')
     result.captureKind=kind;result.semanticsValidated=false
     local path='AtlasSnapshot-DD2-schema-latest.json'
@@ -1054,7 +1286,7 @@ end
 local function capture()
     local result={captureStatus='unavailable',stats=unavailable('Player unavailable'),
         stamina=unavailable('Player unavailable'),vocation=unavailable('Player unavailable'),
-        equipment=unavailable('Player unavailable'),position=unavailable('Player unavailable'),inventory=unavailable('Not probed'),storage=unavailable('Player unavailable'),
+        equipment=unavailable('Player unavailable'),position=unavailable('Player unavailable'),inventory=unavailable('Player unavailable'),storage=unavailable('Player unavailable'),
         health=unavailable('Player unavailable'),skills=unavailable('Player unavailable'),location=unavailable('Player unavailable'),
         calculationEvidence=unavailable('Player unavailable'),party=unavailable('Player unavailable'),
         characterTotals=unavailable('Player unavailable'),
@@ -1062,18 +1294,21 @@ local function capture()
         npcLifeObservations={captureStatus='unavailable',records={},completeRoster=false,
             historicalPlayerKillsAvailable=false,absenceMeansDead=false,
             reason='Death/resurrection and player attribution require runtime schema validation'},
-        quests={captureStatus='unavailable',reason='Schema only; progress not read',
+        quests={captureStatus='unavailable',reason='Schema only; progress not read',completedHistory=unavailable('Player unavailable'),logStatusEvidence=unavailable('Player unavailable'),currentJournal=unavailable('Player unavailable'),
             absenceMeansNeverCompleted=false,lifetimeHistoryGuaranteed=false}}
     local capture_ok,capture_error=pcall(function()
     local cm=sdk.get_managed_singleton('app.CharacterManager')
     local pf=field('app.CharacterManager','<ManualPlayerHuman>k__BackingField')
     local player=cm and pf and pf:get_data(cm)
-    if not player then storage_scans={} end
+    if not player then storage_scans={};player_inventory_scans={} end
     if player then
         result.captureStatus='partial'
         local storage_ok,storage_result=pcall(stored_items)
         result.storage=storage_ok and storage_result or {captureStatus='error',reason=tostring(storage_result)}
         if not storage_ok then storage_scans[65535]=nil end
+        local inventory_ok,inventory_result=pcall(player_inventory,player)
+        result.inventory=inventory_ok and inventory_result or {captureStatus='error',reason=tostring(inventory_result)}
+        if not inventory_ok then player_inventory_scans={} end
         for _,spec in ipairs({{'party',party_observations},{'health',health_observation},{'skills',skill_observations},
                               {'quests',active_quest_observations},{'location',native_area_observation}}) do
             local ok,value=pcall(spec[2],player)
@@ -1083,6 +1318,12 @@ local function capture()
             end
         end
         result.quests.absenceMeansNeverCompleted=false;result.quests.lifetimeHistoryGuaranteed=false
+        local clear_ok,clear_result=pcall(quest_clear_observations)
+        result.quests.completedHistory=clear_ok and clear_result or {captureStatus='error',reason=tostring(clear_result)}
+        local log_ok,log_result=pcall(quest_log_evidence)
+        result.quests.logStatusEvidence=log_ok and log_result or {captureStatus='error',reason=tostring(log_result)}
+        local journal_ok,journal_result=pcall(current_journal,result.quests.logStatusEvidence)
+        result.quests.currentJournal=journal_ok and journal_result or {captureStatus='error',reason=tostring(journal_result)}
         result.calculationEvidence=calculation_evidence(cm)
         result.characterTotals=character_totals(cm,player)
         local npc_ok,npc_rel,npc_life=pcall(npc_observations)
@@ -1127,6 +1368,18 @@ re.on_frame(function()
         if startup then
             startup=false
             local result={captureStatus='partial',fields={},calculationTypes={}}
+            result.coverageSchema={metadataOnly=true,methodsInvoked=false,valuesRead=false,types={},
+                purpose='Candidate signatures only; no wallet balance or gameplay semantics inferred',
+                maxTypes=14,maxMethodsExaminedPerType=4096,maxMethodsRetainedPerType=256}
+            local coverageWords={'money','wallet','cash','gold','rim','rift','currency','exp','level','rank',
+                'job','skill','ability','weight','capacity','time','hour','minute','day','status','health',
+                'special','subskill','personality','debil','save','player','phase','pause'}
+            for _,name in ipairs({'app.Player','app.CharacterManager','app.GuiManager','app.GUIParameterData',
+                'app.ItemManager','app.ItemCashData','app.JobContext','app.HumanSkillContext','app.AbilityContext',
+                'app.PawnDataContext','app.PawnManager','app.TimeManager','app.MainFlowManager','app.Human'}) do
+                local good,value=pcall(describe_type,name,coverageWords)
+                result.coverageSchema.types[name]=good and value or {captureStatus='error',reason=tostring(value)}
+            end
             result.storageSchema={metadataOnly=true,methodsInvoked=false,types={}}
             for _,name in ipairs({'app.ItemManager','app.ItemManager.StorageMasterData','app.ItemDefine.StorageData',
                 'System.Collections.Generic.List`1<app.ItemManager.StorageMasterData>',
