@@ -6,7 +6,7 @@
 
 Experimental local character-observation exporter for **Dragon's Dogma 2** using REFramework. It writes JSON every five seconds for local tools and assistants. It does not deliberately change saves, equipment, affinity or NPC state. Runtime calculations are experimental and may fail as the game or framework changes.
 
-**Version 0.13.0-experimental.** This is not an official Capcom product. It targets DD2, not the original Dragon's Dogma: Dark Arisen.
+**Version 0.16.1-experimental.** This is not an official Capcom product. It targets DD2, not the original Dragon's Dogma: Dark Arisen.
 
 ## Why this is useful
 
@@ -14,7 +14,7 @@ This project grew out of playing DD2 while talking with ChatGPT by voice: asking
 
 It also makes less-visible relationship information easier to discuss. The relationship reader tries to present game rank labels as understandable attitudes while keeping the underlying values and unknowns visible. The stored-rank-to-label mapping has been observed working in a live v0.10 session; those labels do not establish romance or future behavior. For NPC history, the useful answer may be "we observed this NPC dead, but do not know the cause" rather than an invented account of what happened.
 
-You can ask about gear, captured vocation fields or equipment weight where the data supports an answer. For a comparison with an unequipped item, provide that item's details too: the exporter does not read your entire inventory. Party composition still needs extra context; this is not a complete party export or an optimal-build calculator.
+You can ask about gear, captured vocation fields or equipment weight where the data supports an answer. For a comparison with an unequipped item, provide that item's details too: the exporter does not read your entire inventory. Active pawn observations now include identities, owned gear and carried items; availability and skill-slot interpretation still need checking. This is not an optimal-build calculator.
 
 ## Example: ask while you play
 
@@ -53,12 +53,22 @@ Each section reports what could actually be read. Fields can be partial, unavail
 | Position | Raw player world `x`, `y`, `z` coordinates without deliberate rounding. Coordinate units, axis directions, scene identity and conversion to a map grid are unverified or unavailable. A position does not establish that active gameplay is underway. |
 | NPC relationships | Verified character ID, game-resolved name where available, stored sentiment value and rank, temporary sentiment, group identifiers and current quest-layer classification. A rotating scan checks at most 128 holder-array slots and emits at most 32 NPC records per capture. This is neither a complete roster nor proof that you have encountered every listed NPC. |
 | NPC attitudes | The display attempts an exact match between the stored rank and runtime game enum labels, retaining the raw values. Missing or ambiguous matches produce "Unknown attitude." It does not invent affinity thresholds, percentages, romance status or intended behavior. The stored rank and runtime labels were matched successfully in a live v0.10 session; this does not validate behavioral interpretations or guessed thresholds. |
-| Main pawn | Character ID resolved through the main pawn component's cached Character, plus raw `favorabilityRating` and `accumulatedFavorability` from the main pawn context. Pawn name is currently unavailable. This is a separate scale from NPC sentiment; thresholds and normalization are unverified, so the display leaves pawn attitude unknown. The v0.11 receiver correction was live-verified across advancing captures: Character identity and both favorability fields were readable without the previous exception. The numbers are not percentages or verified attitude tiers. |
+| Main pawn | Character ID resolved through the main pawn component's cached Character, plus raw `favorabilityRating` and `accumulatedFavorability` from the main pawn context. The affinity section does not resolve a name; the separate party section attempts pawn names. This is a separate scale from NPC sentiment; thresholds and normalization are unverified, so the display leaves pawn attitude unknown. The v0.11 receiver correction was live-verified across advancing captures: Character identity and both favorability fields were readable without the previous exception. The numbers are not percentages or verified attitude tiers. |
 | Crime | Up to 32 game character-group crime records, with their identifiers and runtime labels, where readable. These are separate from NPC affinity; group-to-town mappings and a universal town-reputation score are not established. |
 | NPC life observations | Explicit dead/coffin flag evidence and entity presence support bounded alive/dead observations after identity checks. An absent entity without a dead flag stays unknown. Records may include raw revival count and an observed entity position, with provenance and cause marked unknown. This does not identify who killed an NPC or where a death originally happened. |
 | Retained NPC evidence | Up to 128 entries from the game's retained NPC-history list: character IDs, raw flags and available enum labels, plus count/truncation information. The bounded list read was observed working in a live v0.10 session. Its runtime flag labels describe sub-NPC/costume classification. These flags are not a verified player-kill ledger and provide no established original event locations. |
 | Capture metadata | Exporter version, capture kind/status, UTC capture time, epoch timestamp, session ID, sequence number, refresh/staleness settings and source/error details. Startup schema metadata describes reflected fields and methods; it is not itself character progress. Lifetime quest completion history is not read by this version. |
 
+## Version 0.16.1 observations and limits
+
+- Active party: up to three pawns, main/recruited roles, names, vocation/rank, owner-checked equipment and separate carried items. Signed and unsigned 32-bit runtime identifiers are accepted; identity and ownership guards remain enforced.
+- Storage: bounded batches of 32 rows, up to 4096 scanned rows, with quantities, item identifiers and available calculated item values. Inn storage and pawn carried items are separate. Equipped items are excluded from carried records. Partial scans, changed lists and per-entry errors are explicit; absence never proves an item is not owned.
+- Skills: runtime getters return named slots, but six slots were observed per pawn. Which slots correspond to active equipped skills is not validated. Do not treat every returned entry as an active ability.
+- Inclination: raw enum IDs and labels only. Mapping to player-facing inclination labels is unvalidated.
+- Dragonsplague: raw possession field only; health, infection and transmission interpretation remain unknown. No automatic disease alerts are provided. Initial values, new recruits or uncertain changes must not be called confirmed transmission.
+- Area display: technical enum strings no longer override a readable broader area name.
+
+Live validation confirmed advancing v0.16.1 captures with all three pawn identities, an independently matching main-pawn identity, 18 owner-matched equipped records, and complete error-free carried scans with no overlap with equipped records. Unavailable equipment slots are not classified as empty. Inn storage remained partial (32 of 149 rows); full storage completion is not live validated. These observations do not establish DPS, UI-equivalent statistics, active skill selection or disease meaning. One startup hang preceded export initialization; a subsequent launch recovered, and its root cause is unknown. Synthetic regression results are separate from these live observations.
 ## Timing, freshness and history
 
 The script attempts a character export every five seconds while its REFramework frame callback runs. It alternates between `AtlasSnapshot-DD2-slot-0.json` and `AtlasSnapshot-DD2-slot-1.json`, then publishes `AtlasSnapshot-DD2-latest.json` as a pointer to the completed slot. The pointer alone is not a character snapshot. Startup metadata goes to `AtlasSnapshot-DD2-schema-latest.json`.

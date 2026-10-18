@@ -1,4 +1,4 @@
--- AtlasSnapshot 0.13.0. Native health, equipped skills, progressing quests and localized areas; pending live verification.
+-- AtlasSnapshot 0.16.1. Read-only active party, owned gear and carried items; pending live validation.
 -- Field names confirmed by the first live probe; semantics remain unvalidated.
 local startup, requested, serial = true, false, 0
 local next_refresh=os.time()+5
@@ -577,8 +577,8 @@ local function item_stats(item,param)
     r.instanceState=ok and state or {captureStatus='error',reason=tostring(state)}
     return r
 end
-local function gear()
-    local id=enum('app.CharacterID').ch000000_00
+local function gear(ownerId)
+    local id=ownerId or enum('app.CharacterID').ch000000_00
     if id==nil then return unavailable('Player CharacterID enum unavailable') end
     local manager=sdk.get_managed_singleton('app.ItemManager')
     local get_equipment=checked_method(sdk.find_type_definition('app.ItemManager'),'getEquipData',1)
@@ -605,6 +605,9 @@ local function gear()
         local ok,err=pcall(function()
             local item=get_slot:call(data,entry.slot)
             if not item then entry.reason='Slot returned no object; not classified as empty';return end
+            if ownerId and item:get_field('_CharaId')~=ownerId then
+                entry.reason='Equipment owner does not match pawn';return
+            end
             local param=item:get_field('_ItemData')
             if not param then entry.reason='Item parameter unavailable';return end
             local item_id=param:get_field('_Id')
@@ -829,7 +832,9 @@ local function native_area_observation()
     end
     r.areaName=r.areaId and readable(static_get('app.GUIBase','getAIAreaName',{'app.AIAreaDefinition'},'System.String',r.areaId)) or nil
     r.localAreaName=r.localAreaId and readable(static_get('app.GUIBase','getAILocalAreaName',{'app.AILocalAreaDefinition'},'System.String',r.localAreaId)) or nil
-    r.displayName=r.localAreaName or r.areaName or unavailable('Native localized name unavailable')
+    local localName=r.localAreaName~=r.localAreaEnumLabel and r.localAreaName or nil
+    local areaName=r.areaName~=r.areaEnumLabel and r.areaName or nil
+    r.displayName=localName or areaName or unavailable('Native localized name unavailable')
     return r
 end
 local function gameplay_schema()
@@ -846,6 +851,166 @@ local function gameplay_schema()
         r.types[name]=ok and value or {captureStatus='error',reason=tostring(value)}
     end
     return r
+end
+-- Storage owner and accessor documented by MyDD2Mod and Inventory-Manager.
+-- Only the read accessor is used; no transfer, grant, delete or quantity setters.
+local storage_scans={}
+local function stored_items(carriedOwner,identity)
+    local owner=carriedOwner or 65535
+    local manager=sdk.get_managed_singleton('app.ItemManager')
+    local listType='System.Collections.Generic.List`1<app.ItemManager.StorageMasterData>'
+    local getter=exact_method('app.ItemManager','getStorageMasterList',{'app.CharacterID'},listType)
+    if not manager or not getter then storage_scans[owner]=nil;return unavailable('Storage list exact signature unavailable; inspect storageSchema') end
+    local list=getter:call(manager,owner)
+    if not list then storage_scans[owner]=nil;return unavailable('Storage list unavailable') end
+    local td=list:get_type_definition()
+    if td:get_full_name()~=listType then storage_scans[owner]=nil;return unavailable('Unexpected storage list type') end
+    local sf,af,vf=td:get_field('_size'),td:get_field('_items'),td:get_field('_version')
+    if not sf or not af or not vf then storage_scans[owner]=nil;return unavailable('Storage list consistency fields unavailable') end
+    local count,items,version=sf:get_data(list),af:get_data(list),vf:get_data(list)
+    local function integer(n,minimum) return type(n)=='number' and n==n and n<math.huge and n%1==0 and n>=minimum end
+    if not integer(count,0) or count>65536 or not integer(version,0) or not items or items:get_size()<count then
+        storage_scans[owner]=nil;return unavailable('Invalid storage list bounds/version')
+    end
+    local s=storage_scans[owner]
+    if not s or s.list~=list or s.items~=items or s.version~=version or s.count~=count or s.finished or s.identity~=identity then
+        s={list=list,items=items,version=version,count=count,next=0,records={},seen={},errors=0,startedAtEpoch=os.time(),identity=identity};storage_scans[owner]=s
+    end
+    for i=s.next,math.min(s.next+32,count,4096)-1 do
+        local ok,record=pcall(function()
+            local master=items:get_element(i)
+            local data=master and master:get_field('_Param')
+            if not data or data:get_type_definition():get_full_name()~='app.ItemDefine.StorageData' then error('Stored instance unavailable/type mismatch') end
+            local id,quantity,storageId=data:get_field('_ItemId'),data:get_field('_Num'),data:get_field('_StorageId')
+            if data:get_field('_CharaId')~=owner then error('Storage ownership mismatch') end
+            local equipped=data:get_field('_IsEquipped')
+            if carriedOwner and equipped==true then return nil end
+            if equipped~=false then error('Storage equipped state mismatch') end
+            if not integer(id,1) or not integer(quantity,1) or not integer(storageId,0) then error('Invalid stored identity or quantity') end
+            local param=data:get_field('_ItemData')
+            if not param or param:get_field('_Id')~=id then error('Stored item parameter identity mismatch') end
+            local rec={recordIndex=i,itemId=id,storageId=storageId,storageIdRepeated=s.seen[storageId]==true,
+                quantity=quantity,observedAtEpoch=os.time(),captureStatus='partial',source='StorageMasterData._Param'}
+            if not name_cache[id] then
+                local nameMethod=checked_method(sdk.find_type_definition('app.GUIBase'),'getElfItemName(System.Int32, System.Boolean)',2)
+                if nameMethod then
+                    local good,name=pcall(function() return nameMethod:call(nil,id,false) end)
+                    if good and type(name)=='string' and name~='' then name_cache[id]=name end
+                end
+            end
+            rec.name=name_cache[id];rec.nameStatus=rec.name and 'captured' or 'unavailable'
+            rec.effectiveItemStats=unavailable('Not verified as equipment')
+            local hasEquipmentFields=false
+            for _,key in ipairs({'_PhysicalAttack','_PhysicalDefence'}) do
+                local good,value=pcall(function() return param:get_field(key) end)
+                if good and type(value)=='number' then hasEquipmentFields=true end
+            end
+            if hasEquipmentFields then
+                rec.effectiveItemStats=computed_value(data,'app.ItemDefine.StorageData','makeEnhancedParam',{},'app.EquipParam')
+            end
+            rec.effectiveWeight=computed_value(data,'app.ItemDefine.StorageData','calcWeightPerPiece',{},'System.Int32')
+            s.seen[storageId]=true
+            return rec
+        end)
+        if ok then s.records[#s.records+1]=record else s.errors=s.errors+1;s.lastError=tostring(record) end
+    end
+    if sf:get_data(list)~=count or vf:get_data(list)~=version or af:get_data(list)~=items then
+        storage_scans[owner]=nil;return unavailable('Storage changed during batch; accumulated scan discarded')
+    end
+    s.next=math.min(s.next+32,count,4096);s.finished=s.next>=count or s.next>=4096
+    local records={};for i,rec in ipairs(s.records) do records[i]=rec end
+    return {captureStatus='partial',source='ItemManager.getStorageMasterList(storage owner)',ownerId=owner,
+        records=records,scanned=s.next,totalRows=count,scanComplete=s.next==count and s.errors==0,
+        truncated=count>4096,entryErrors=s.errors,lastError=s.lastError,
+        startedAtEpoch=s.startedAtEpoch,lastBatchAtEpoch=os.time(),batchLimit=32,
+        consistency='List version checked; individual item values can change across batches',
+        atomicSnapshot=false,ownershipSemanticsLiveValidated=false,
+        absenceMeansNotOwned=false,scope=carriedOwner and 'Carried items only; equipped items excluded' or 'Inn storage only; not carried or pawn inventory'}
+end
+-- Active roster only. A cached Human is trusted only after matching character IDs.
+local function party_observations()
+    local manager=sdk.get_managed_singleton('app.PawnManager')
+    local listType='System.Collections.Generic.List`1<app.Pawn>'
+    local list=safe_get(manager,'app.PawnManager','get_PartyPawnList',{},listType)
+    -- Clear carried caches if a roster cannot be established; never reuse across gaps.
+    local function clearCarried()
+        for owner in pairs(storage_scans) do if owner~=65535 then storage_scans[owner]=nil end end
+    end
+    if not list then clearCarried();return unavailable('Current party list unavailable') end
+    local td=list:get_type_definition()
+    if td:get_full_name()~=listType then clearCarried();return unavailable('Party list type mismatch') end
+    local sf,af,vf=td:get_field('_size'),td:get_field('_items'),td:get_field('_version')
+    if not sf or not af or not vf then clearCarried();return unavailable('Party consistency fields unavailable') end
+    local count,items,version=sf:get_data(list),af:get_data(list),vf:get_data(list)
+    if type(count)~='number' or count%1~=0 or count<0 or count>16 or not items or items:get_size()<count or type(version)~='number' then
+        clearCarried();return unavailable('Invalid party bounds/version')
+    end
+    local main=field_value(manager,'app.PawnManager','_MainPawn')
+    local result={captureStatus='partial',records={},rosterComplete=count<=3,totalRows=count,
+        source='PawnManager.get_PartyPawnList',semanticsValidated=false}
+    local seen={}
+    for i=0,math.min(count,3)-1 do
+        local ok,record=pcall(function()
+            local pawn=items:get_element(i)
+            local character=field_value(pawn,'app.Pawn','<CachedCharacter>k__BackingField')
+            local id=safe_get(character,'app.Character','get_CharaID',{},'app.CharacterID')
+            if type(id)~='number' or id%1~=0 or id < -2147483648 or id>4294967295 or id==65535 or
+                id==enum('app.CharacterID').ch000000_00 or seen[id] then error('Missing or duplicate pawn identity') end
+            seen[id]=true
+            local r={characterId=id,role=pawn==main and 'main pawn' or 'recruited pawn',captureStatus='partial',
+                equipment=unavailable('Not read'),skills=unavailable('Human identity unavailable'),
+                inclination=unavailable('Inclination semantics not validated'),
+                carriedInventory=unavailable('Carried inventory reader pending'),
+                dragonsplague={status='unknown',captureStatus='unavailable',transmissionConfirmed=false}}
+            local human=field_value(pawn,'app.Pawn','<CachedHuman>k__BackingField')
+            local humanChar=field_value(human,'app.Human','<Chara>k__BackingField')
+            local humanId=safe_get(humanChar,'app.Character','get_CharaID',{},'app.CharacterID')
+            local context
+            if humanId==id then
+                local good,value=pcall(skill_observations,human)
+                r.skills=good and value or {captureStatus='error',reason=tostring(value)}
+                context=field_value(human,'app.Human','<PawnDataContext>k__BackingField')
+            end
+            if not context then
+                local holder=field_value(pawn,'app.Pawn','CachedContextHolder')
+                context=safe_get(holder,'app.ContextHolder','getContext',{},'app.PawnDataContext')
+            end
+            r.name=scalar_field(context,'_Name')
+            local personality=scalar_field(context,'_Personality')
+            if type(personality)=='number' and personality%1==0 then
+                r.inclination={captureStatus='partial',rawId=personality,source='PawnDataContext._Personality',semanticsValidated=false}
+                for label,value in pairs(enum('app.PersonalityDefine.PersonalityID')) do
+                    if value==personality then r.inclination.enumLabel=label;break end
+                end
+            end
+            local level=scalar_field(context,'_PossessionLv')
+            if type(level)=='number' then
+                r.dragonsplague.rawPossessionLevel=level
+                r.dragonsplague.captureStatus='partial'
+                r.dragonsplague.reason='Raw field only; disease and transmission interpretation unvalidated'
+            end
+            local inventoryOk,inventory=pcall(stored_items,id,pawn)
+            r.carriedInventory=inventoryOk and inventory or {captureStatus='error',reason=tostring(inventory)}
+            if not inventoryOk then storage_scans[id]=nil end
+            local good,value=pcall(gear,id)
+            r.equipment=good and value or {captureStatus='error',reason=tostring(value)}
+            if r.equipment.slots then
+                r.equipment.playerCharacterId=nil;r.equipment.characterId=id
+                r.equipment.source='ItemManager.getEquipData(verified pawn CharacterID).get(slot)'
+            end
+            if safe_get(character,'app.Character','get_CharaID',{},'app.CharacterID')~=id then error('Pawn identity changed during capture') end
+            return r
+        end)
+        if ok then result.records[#result.records+1]=record
+        else result.rosterComplete=false;result.lastError=tostring(record) end
+    end
+    if sf:get_data(list)~=count or vf:get_data(list)~=version or af:get_data(list)~=items then
+        clearCarried();return unavailable('Party changed during capture; records discarded')
+    end
+    for owner in pairs(storage_scans) do
+        if owner~=65535 and not seen[owner] then storage_scans[owner]=nil end
+    end
+    return result
 end
 local function position(player)
     -- Established source: DD2 Content Editor devtools.lua player transform read path.
@@ -866,7 +1031,7 @@ local function position(player)
 end
 local function write(result,kind)
     serial=serial+1
-    result.tool='AtlasSnapshot-DD2';result.version='0.13.0-experimental'
+    result.tool='AtlasSnapshot-DD2';result.version='0.16.1-experimental'
     result.capturedAtUtc=os.date('!%Y-%m-%dT%H:%M:%SZ')
     result.captureKind=kind;result.semanticsValidated=false
     local path='AtlasSnapshot-DD2-schema-latest.json'
@@ -889,9 +1054,9 @@ end
 local function capture()
     local result={captureStatus='unavailable',stats=unavailable('Player unavailable'),
         stamina=unavailable('Player unavailable'),vocation=unavailable('Player unavailable'),
-        equipment=unavailable('Player unavailable'),position=unavailable('Player unavailable'),inventory=unavailable('Not probed'),
+        equipment=unavailable('Player unavailable'),position=unavailable('Player unavailable'),inventory=unavailable('Not probed'),storage=unavailable('Player unavailable'),
         health=unavailable('Player unavailable'),skills=unavailable('Player unavailable'),location=unavailable('Player unavailable'),
-        calculationEvidence=unavailable('Player unavailable'),
+        calculationEvidence=unavailable('Player unavailable'),party=unavailable('Player unavailable'),
         characterTotals=unavailable('Player unavailable'),
         relationships=relationship_status(),
         npcLifeObservations={captureStatus='unavailable',records={},completeRoster=false,
@@ -903,12 +1068,19 @@ local function capture()
     local cm=sdk.get_managed_singleton('app.CharacterManager')
     local pf=field('app.CharacterManager','<ManualPlayerHuman>k__BackingField')
     local player=cm and pf and pf:get_data(cm)
+    if not player then storage_scans={} end
     if player then
         result.captureStatus='partial'
-        for _,spec in ipairs({{'health',health_observation},{'skills',skill_observations},
+        local storage_ok,storage_result=pcall(stored_items)
+        result.storage=storage_ok and storage_result or {captureStatus='error',reason=tostring(storage_result)}
+        if not storage_ok then storage_scans[65535]=nil end
+        for _,spec in ipairs({{'party',party_observations},{'health',health_observation},{'skills',skill_observations},
                               {'quests',active_quest_observations},{'location',native_area_observation}}) do
             local ok,value=pcall(spec[2],player)
             result[spec[1]]=ok and value or {captureStatus='error',reason=tostring(value)}
+            if spec[1]=='party' and (not ok or value.captureStatus=='unavailable' or value.captureStatus=='error') then
+                for owner in pairs(storage_scans) do if owner~=65535 then storage_scans[owner]=nil end end
+            end
         end
         result.quests.absenceMeansNeverCompleted=false;result.quests.lifetimeHistoryGuaranteed=false
         result.calculationEvidence=calculation_evidence(cm)
@@ -955,6 +1127,13 @@ re.on_frame(function()
         if startup then
             startup=false
             local result={captureStatus='partial',fields={},calculationTypes={}}
+            result.storageSchema={metadataOnly=true,methodsInvoked=false,types={}}
+            for _,name in ipairs({'app.ItemManager','app.ItemManager.StorageMasterData','app.ItemDefine.StorageData',
+                'System.Collections.Generic.List`1<app.ItemManager.StorageMasterData>',
+                'app.PersonalityDefine.PersonalityID','app.Personality','app.PawnDataContext','app.ContextHolder'}) do
+                local ok,value=pcall(describe_type,name,false)
+                result.storageSchema.types[name]=ok and value or {captureStatus='error',reason=tostring(value)}
+            end
             local discovery_ok,discovery=pcall(gameplay_schema)
             result.gameplaySchema=discovery_ok and discovery or {captureStatus='error',reason=tostring(discovery)}
             local rel_ok,rel_value=pcall(relationship_schema)
